@@ -1,0 +1,24 @@
+# ClaudePulse Git Ignore
+# Sensitive Database & Key Vault Files
+database/*.sqlite
+database/*.sqlite-wal
+database/*.sqlite-shm
+database/secret.key
+database/sessions/sess_*
+database/backups/*
+!database/backups/.gitkeep
+!database/.htaccess
+
+# Archives & Temporary deployment artifacts
+update.zip
+*.zip
+*.tar.gz
+*.log
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

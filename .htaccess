@@ -1,0 +1,49 @@
+# ClaudePulse Apache / LiteSpeed Configuration
+# Optimized for Shared Hosting, Clean URLs, and Long-Running SSE Streaming
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # LiteSpeed & Apache long-running SSE stream preservation
+    # Prevents premature aborts and timeouts during multi-minute Claude streaming
+    RewriteRule .* - [E=noabort:1,E=noconntimeout:1]
+
+    # Pass Authorization & API Key headers through to PHP on shared hosting
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteRule .* - [E=HTTP_X_API_KEY:%{HTTP:x-api-key}]
+
+    # Block direct access to sensitive directories and config files
+    RewriteRule ^(database|src|config\.php|\.git|\.env) - [F,L,NC]
+
+    # Allow direct access to existing files and directories (assets, etc.)
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Route all other requests through index.php
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+# Security Headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Prevent directory browsing
+Options -Indexes
+
+# Protect hidden files (.htaccess, .sqlite, etc.)
+<FilesMatch "^\.|\.sqlite$|\.key$|\.log$">
+    <IfModule authz_core_module>
+        Require all denied
+    </IfModule>
+    <IfModule !authz_core_module>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
