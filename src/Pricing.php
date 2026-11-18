@@ -297,20 +297,48 @@ class Pricing
     public static function getDefaultFallbackCatalog(): array
     {
         return [
-            // --- CLAUDE 5 & FABLE 5.2 FRONTIER SERIES ---
+            // --- RECOMMENDED FLAGSHIP & STANDARD MODELS FIRST FOR CLAUDE DESKTOP & CLI ---
             [
-                'id' => 'claude-fable-5-2',
-                'name' => 'Claude Fable 5.2',
-                'alias' => 'claude-5-2-fable',
-                'badge' => 'Frontier Agentic Reasoning',
-                'tier' => 'Autonomous Agentic Reasoning',
-                'description' => 'Flagship agentic reasoning model engineered for long-horizon autonomous planning, multi-tool orchestration, and deep logic verification',
+                'id' => 'claude-sonnet-5-5',
+                'name' => 'Claude Sonnet 5.5',
+                'alias' => 'claude-5-5-sonnet',
+                'badge' => 'Flagship Intelligence & Coding',
+                'tier' => 'Frontier Speed & Coding Mastery',
+                'description' => 'The premier balance of frontier intelligence, speed, and coding execution for Claude Code CLI and Desktop',
                 'input_price' => '$3.00 / MTok',
                 'output_price' => '$15.00 / MTok',
                 'cache_read' => '$0.30 / MTok',
                 'context_window' => 1000000,
                 'max_output' => 128000,
-                'created_at' => '2026-11-09T18:30:00Z'
+                'created_at' => '2026-09-28T00:00:00Z'
+            ],
+            [
+                'id' => 'claude-3-7-sonnet-20250219',
+                'name' => 'Claude 3.7 Sonnet',
+                'alias' => 'claude-3-7-sonnet-latest',
+                'badge' => 'Hybrid Reasoning',
+                'tier' => 'Extended Thinking & Code',
+                'description' => 'Hybrid reasoning model with extended thinking mode and high-speed precision coding capability',
+                'input_price' => '$3.00 / MTok',
+                'output_price' => '$15.00 / MTok',
+                'cache_read' => '$0.30 / MTok',
+                'context_window' => 200000,
+                'max_output' => 64000,
+                'created_at' => '2025-02-19T00:00:00Z'
+            ],
+            [
+                'id' => 'claude-haiku-4-5-20251001',
+                'name' => 'Claude Haiku 4.5',
+                'alias' => 'claude-haiku-4-5',
+                'badge' => 'High Velocity',
+                'tier' => 'Budget Optimized',
+                'description' => 'High speed, cost effective model for continuous validation and fast pipeline steps',
+                'input_price' => '$0.80 / MTok',
+                'output_price' => '$4.00 / MTok',
+                'cache_read' => '$0.08 / MTok',
+                'context_window' => 200000,
+                'max_output' => 64000,
+                'created_at' => '2025-10-15T00:00:00Z'
             ],
             [
                 'id' => 'claude-haiku-5-5',
@@ -327,18 +355,18 @@ class Pricing
                 'created_at' => '2026-10-07T18:00:00Z'
             ],
             [
-                'id' => 'claude-sonnet-5-5',
-                'name' => 'Claude Sonnet 5.5',
-                'alias' => 'claude-5-5-sonnet',
-                'badge' => 'Claude Code Flagship',
-                'tier' => 'Frontier Speed & Coding Mastery',
-                'description' => 'The ultimate balance of frontier intelligence, speed, and coding execution for Claude Code CLI and agentic developers',
+                'id' => 'claude-3-5-sonnet-20241022',
+                'name' => 'Claude 3.5 Sonnet',
+                'alias' => 'claude-3-5-sonnet-latest',
+                'badge' => 'Frontier Intelligence',
+                'tier' => 'State-of-the-Art Coding',
+                'description' => 'Standard frontier coding and multimodal intelligence with 200k context window',
                 'input_price' => '$3.00 / MTok',
                 'output_price' => '$15.00 / MTok',
                 'cache_read' => '$0.30 / MTok',
-                'context_window' => 1000000,
-                'max_output' => 128000,
-                'created_at' => '2026-09-28T00:00:00Z'
+                'context_window' => 200000,
+                'max_output' => 64000,
+                'created_at' => '2024-10-22T00:00:00Z'
             ],
             [
                 'id' => 'claude-opus-5-5',
@@ -353,6 +381,20 @@ class Pricing
                 'context_window' => 1000000,
                 'max_output' => 128000,
                 'created_at' => '2026-09-21T16:24:00Z'
+            ],
+            [
+                'id' => 'claude-fable-5-2',
+                'name' => 'Claude Fable 5.2',
+                'alias' => 'claude-5-2-fable',
+                'badge' => 'Frontier Agentic Reasoning',
+                'tier' => 'Autonomous Agentic Reasoning',
+                'description' => 'Flagship agentic reasoning model engineered for long-horizon autonomous planning, multi-tool orchestration, and deep logic verification',
+                'input_price' => '$3.00 / MTok',
+                'output_price' => '$15.00 / MTok',
+                'cache_read' => '$0.30 / MTok',
+                'context_window' => 1000000,
+                'max_output' => 128000,
+                'created_at' => '2026-11-09T18:30:00Z'
             ],
             [
                 'id' => 'claude-fable-5-1',
@@ -397,20 +439,6 @@ class Pricing
                 'created_at' => '2026-02-04T00:00:00Z'
             ],
             [
-                'id' => 'claude-haiku-4-5-20251001',
-                'name' => 'Claude Haiku 4.5',
-                'alias' => 'claude-haiku-4-5',
-                'badge' => 'High Velocity',
-                'tier' => 'Budget Optimized',
-                'description' => 'High speed, cost effective model for continuous validation and fast pipeline steps',
-                'input_price' => '$0.80 / MTok',
-                'output_price' => '$4.00 / MTok',
-                'cache_read' => '$0.08 / MTok',
-                'context_window' => 200000,
-                'max_output' => 64000,
-                'created_at' => '2025-10-15T00:00:00Z'
-            ],
-            [
                 'id' => 'claude-opus-4-5-20251101',
                 'name' => 'Claude Opus 4.5',
                 'alias' => 'claude-opus-4-5',
@@ -423,20 +451,6 @@ class Pricing
                 'context_window' => 200000,
                 'max_output' => 64000,
                 'created_at' => '2025-11-24T00:00:00Z'
-            ],
-            [
-                'id' => 'claude-3-7-sonnet-20250219',
-                'name' => 'Claude 3.7 Sonnet',
-                'alias' => 'claude-3-7-sonnet-latest',
-                'badge' => 'Hybrid Reasoning',
-                'tier' => 'Extended Thinking & Code',
-                'description' => 'Hybrid reasoning model with extended thinking mode and high-speed precision coding capability',
-                'input_price' => '$3.00 / MTok',
-                'output_price' => '$15.00 / MTok',
-                'cache_read' => '$0.30 / MTok',
-                'context_window' => 200000,
-                'max_output' => 64000,
-                'created_at' => '2025-02-19T00:00:00Z'
             ]
         ];
     }

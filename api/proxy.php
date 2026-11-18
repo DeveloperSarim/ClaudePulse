@@ -29,6 +29,18 @@ while (ob_get_level() > 0) {
 }
 ob_implicit_flush(true);
 
+// -------------------------------------------------------------
+// Universal CORS & Preflight Handling for Claude Desktop, Web UI, SDKs, & IDEs
+// -------------------------------------------------------------
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Authorization, Content-Type, X-API-Key, x-api-key, Anthropic-Version, anthropic-version, Anthropic-Beta, anthropic-beta, User-Agent, user-agent, Claude-Context, x-app');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
 $startTime = microtime(true);
 $db = Database::getConnection();
 
@@ -49,6 +61,15 @@ if ($basePath !== '' && $basePath !== '.' && $basePath !== '/') {
 }
 $endpoint = '/' . ltrim($parsedPath, '/');
 
+// Canonicalize repeated /v1/v1/ or root-relative /models and /messages
+$endpoint = preg_replace('#^/v1/v1/#', '/v1/', $endpoint);
+if ($endpoint === '/models' || str_starts_with($endpoint, '/models/')) {
+    $endpoint = '/v1' . $endpoint;
+}
+if ($endpoint === '/messages' || str_starts_with($endpoint, '/messages/')) {
+    $endpoint = '/v1' . $endpoint;
+}
+
 // -------------------------------------------------------------
 // 2. Extract and Validate Gateway API Key (sk-cp-...)
 // -------------------------------------------------------------
@@ -62,7 +83,7 @@ foreach ($allHeaders as $hKey => $hVal) {
         $rawGatewayKey = trim($hVal);
         break;
     }
-    if ($hKeyLower === 'authorization' && preg_match('/Bearer\s+(sk-cp-[a-zA-Z0-9_\-]+)/i', $hVal, $matches)) {
+    if ($hKeyLower === 'authorization' && preg_match('/Bearer\s+([^\s]+)/i', $hVal, $matches)) {
         $rawGatewayKey = trim($matches[1]);
         break;
     }
@@ -72,7 +93,7 @@ foreach ($allHeaders as $hKey => $hVal) {
 if (empty($rawGatewayKey)) {
     if (!empty($_SERVER['HTTP_X_API_KEY'])) {
         $rawGatewayKey = trim($_SERVER['HTTP_X_API_KEY']);
-    } elseif (!empty($_SERVER['HTTP_AUTHORIZATION']) && preg_match('/Bearer\s+(sk-cp-[a-zA-Z0-9_\-]+)/i', $_SERVER['HTTP_AUTHORIZATION'], $matches)) {
+    } elseif (!empty($_SERVER['HTTP_AUTHORIZATION']) && preg_match('/Bearer\s+([^\s]+)/i', $_SERVER['HTTP_AUTHORIZATION'], $matches)) {
         $rawGatewayKey = trim($matches[1]);
     }
 }
@@ -120,74 +141,66 @@ if ($isModelsEndpoint && $_SERVER['REQUEST_METHOD'] === 'GET') {
         }
     }
 
-    // Retrieve active models catalog
-    $modelsList = [];
-    $stmtLiveUpstream = $db->query("SELECT api_key_encrypted FROM upstream_keys WHERE is_active = 1 ORDER BY priority ASC LIMIT 1");
-    $liveUpstreamRow = $stmtLiveUpstream->fetch();
-
-    if ($liveUpstreamRow) {
-        try {
-            $liveUpstreamKey = Crypto::decrypt($liveUpstreamRow['api_key_encrypted']);
-            $chModels = curl_init('https://api.anthropic.com/v1/models');
-            curl_setopt($chModels, CURLOPT_HTTPHEADER, [
-                'x-api-key: ' . $liveUpstreamKey,
-                'anthropic-version: 2023-06-01'
-            ]);
-            curl_setopt($chModels, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($chModels, CURLOPT_CONNECTTIMEOUT, 4);
-            curl_setopt($chModels, CURLOPT_TIMEOUT, 6);
-            $liveResp = curl_exec($chModels);
-            $liveCode = curl_getinfo($chModels, CURLINFO_HTTP_CODE);
-            curl_close($chModels);
-
-            if ($liveCode === 200 && $liveResp) {
-                $liveData = json_decode($liveResp, true);
-                if (!empty($liveData['data']) && is_array($liveData['data'])) {
-                    $modelsList = $liveData['data'];
-                }
-            }
-        } catch (\Exception $e) {}
-    }
-
-    if (empty($modelsList)) {
-        foreach (Pricing::getKnownModels() as $km) {
-            $modelsList[] = [
-                'type'         => 'model',
-                'id'           => $km['id'],
-                'display_name' => $km['name'] ?? $km['id'],
-                'created_at'   => $km['created_at'] ?? '2026-01-01T00:00:00Z'
-            ];
-        }
+    // Build base catalog from getKnownModels()
+    $knownModels = Pricing::getKnownModels();
+    $catalogMap = [];
+    foreach ($knownModels as $km) {
+        $mId = $km['id'];
+        $catalogMap[$mId] = [
+            'type'         => 'model',
+            'id'           => $mId,
+            'display_name' => $km['name'] ?? $mId,
+            'created_at'   => $km['created_at'] ?? '2026-01-01T00:00:00Z'
+        ];
     }
 
     // Filter models if key has allowed_models whitelist
     if (!empty($gatewayKey['allowed_models'])) {
-        $allowedList = array_filter(array_map('trim', explode(',', $gatewayKey['allowed_models'])));
-        if (!empty($allowedList)) {
-            $filtered = [];
-            foreach ($modelsList as $m) {
-                $mId = strtolower($m['id'] ?? '');
-                $mName = strtolower($m['display_name'] ?? $m['name'] ?? '');
-                foreach ($allowedList as $allowed) {
-                    $allowedLower = strtolower(trim($allowed));
-                    if (
-                        $mId === $allowedLower ||
-                        str_starts_with($mId, $allowedLower) ||
-                        str_starts_with($allowedLower, $mId) ||
-                        str_contains($mId, $allowedLower) ||
-                        str_contains($mName, $allowedLower) ||
-                        ($allowedLower === 'sonnet' && str_contains($mId, 'sonnet')) ||
-                        ($allowedLower === 'opus' && str_contains($mId, 'opus')) ||
-                        ($allowedLower === 'haiku' && str_contains($mId, 'haiku')) ||
-                        ($allowedLower === 'fable' && str_contains($mId, 'fable'))
-                    ) {
-                        $filtered[] = $m;
-                        break;
-                    }
+        $allowedTokens = array_filter(array_map('trim', explode(',', $gatewayKey['allowed_models'])));
+        $filtered = [];
+
+        foreach ($allowedTokens as $tok) {
+            $tokClean = trim($tok);
+            $tokLower = strtolower($tokClean);
+            $matched = false;
+
+            foreach ($catalogMap as $mId => $mObj) {
+                $mIdLower = strtolower($mId);
+                $mNameLower = strtolower($mObj['display_name']);
+
+                if (
+                    $mIdLower === $tokLower ||
+                    str_starts_with($mIdLower, $tokLower) ||
+                    str_starts_with($tokLower, $mIdLower) ||
+                    str_contains($mIdLower, $tokLower) ||
+                    str_contains($mNameLower, $tokLower) ||
+                    ($tokLower === 'haiku' && str_contains($mIdLower, 'haiku')) ||
+                    ($tokLower === 'sonnet' && str_contains($mIdLower, 'sonnet')) ||
+                    ($tokLower === 'opus' && str_contains($mIdLower, 'opus')) ||
+                    ($tokLower === 'fable' && str_contains($mIdLower, 'fable'))
+                ) {
+                    $filtered[$mId] = $mObj;
+                    $matched = true;
                 }
             }
-            $modelsList = array_values($filtered);
+
+            // If an explicitly allowed token is not in catalogMap, create an entry dynamically
+            // so that Claude Desktop will ALWAYS see and discover this allowed model!
+            if (!$matched) {
+                $cleanName = ucwords(str_replace(['claude-', '-', '_'], ['Claude ', ' ', ' '], $tokClean));
+                $filtered[$tokClean] = [
+                    'type'         => 'model',
+                    'id'           => $tokClean,
+                    'display_name' => $cleanName,
+                    'created_at'   => date('Y-m-d\TH:i:s\Z')
+                ];
+            }
         }
+
+        $modelsList = array_values($filtered);
+    } else {
+        // All models allowed: return entire known catalog
+        $modelsList = array_values($catalogMap);
     }
 
     header('Content-Type: application/json; charset=utf-8');

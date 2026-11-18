@@ -141,26 +141,85 @@ $models = Pricing::getKnownModels();
         <!-- Tab Navigation -->
         <div class="border-b border-slate-200 dark:border-slate-800">
             <nav class="flex space-x-4 sm:space-x-8 text-xs sm:text-sm overflow-x-auto">
-                <button class="doc-tab-btn pb-3 border-b-2 border-emerald-600 text-emerald-700 dark:border-emerald-400 dark:text-emerald-400 font-bold whitespace-nowrap" data-target="tab-claude-code">
-                    1. Claude Code CLI
+                <button class="doc-tab-btn pb-3 border-b-2 border-emerald-600 text-emerald-700 dark:border-emerald-400 dark:text-emerald-400 font-bold whitespace-nowrap" data-target="tab-claude-desktop">
+                    1. Claude Desktop App
+                </button>
+                <button class="doc-tab-btn pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-semibold whitespace-nowrap" data-target="tab-claude-code">
+                    2. Claude Code CLI
                 </button>
                 <button class="doc-tab-btn pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-semibold whitespace-nowrap" data-target="tab-cursor">
-                    2. Cursor IDE
+                    3. Cursor IDE
                 </button>
                 <button class="doc-tab-btn pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-semibold whitespace-nowrap" data-target="tab-sdks">
-                    3. Python & TypeScript
+                    4. Python & TypeScript
                 </button>
                 <button class="doc-tab-btn pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-semibold whitespace-nowrap" data-target="tab-curl">
-                    4. cURL & REST API
+                    5. cURL & REST API
                 </button>
                 <button class="doc-tab-btn pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white font-semibold whitespace-nowrap" data-target="tab-balance">
-                    5. Balance & Limits (/verify)
+                    6. Balance & Limits (/verify)
                 </button>
             </nav>
         </div>
 
-        <!-- TAB 1: Claude Code CLI -->
-        <div id="tab-claude-code" class="doc-tab-content space-y-6">
+        <!-- TAB: Claude Desktop App -->
+        <div id="tab-claude-desktop" class="doc-tab-content space-y-6">
+            <div class="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20 text-xs text-emerald-900 dark:text-emerald-200">
+                <div class="font-bold flex items-center space-x-1.5 mb-1">
+                    <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    <span>Claude Desktop App &mdash; 100% Automatic Model Discovery</span>
+                </div>
+                <p class="leading-relaxed">
+                    Connect official Claude Desktop (Windows or Mac) directly to ClaudePulse. Models auto-populate in your chat dropdown based on your API key's permissions with zero manual model typing!
+                </p>
+            </div>
+
+            <div class="card-clean p-6 space-y-5">
+                <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                    <span class="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 inline-flex items-center justify-center text-xs font-bold">1</span>
+                    <span>Open Claude Desktop Settings</span>
+                </h3>
+                <p class="text-xs text-slate-600 dark:text-slate-400">
+                    In Claude Desktop, click your profile / initials in the bottom-left (or press <kbd class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[11px] border border-slate-300 dark:border-slate-700">Ctrl + ,</kbd> / <kbd class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[11px] border border-slate-300 dark:border-slate-700">Cmd + ,</kbd>), then select <b>Developer</b> or <b>Custom Models / Third-Party Provider</b>.
+                </p>
+
+                <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center space-x-2 pt-2">
+                    <span class="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 inline-flex items-center justify-center text-xs font-bold">2</span>
+                    <span>Enter Connection Credentials</span>
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                        <div class="text-[11px] font-bold text-slate-500 uppercase mb-1">Provider URL (Base URL)</div>
+                        <div class="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400 select-all var-base-url"><?= $currentHost ?></div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                        <div class="text-[11px] font-bold text-slate-500 uppercase mb-1">API Key</div>
+                        <div class="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400 select-all var-api-key">sk-cp-your-gateway-key</div>
+                    </div>
+                </div>
+
+                <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center space-x-2 pt-2">
+                    <span class="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 inline-flex items-center justify-center text-xs font-bold">3</span>
+                    <span>Enable Automatic Model Discovery</span>
+                </h3>
+                <ul class="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc list-inside">
+                    <li>Toggle <b>"Model discovery"</b> to <b>ON</b>.</li>
+                    <li><strong class="text-amber-600 dark:text-amber-400">Important:</strong> Leave the <b>"Model list"</b> text box <b>completely empty</b>. (If you type model names manually here, Claude Desktop overrides and hides auto-discovered models).</li>
+                    <li>Click <b>"Test model discovery"</b> &mdash; it will return <span class="text-emerald-600 dark:text-emerald-400 font-bold">&check; Success</span> and automatically discover your permitted models!</li>
+                </ul>
+
+                <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center space-x-2 pt-2">
+                    <span class="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 inline-flex items-center justify-center text-xs font-bold">4</span>
+                    <span>Start Chatting</span>
+                </h3>
+                <p class="text-xs text-slate-600 dark:text-slate-400">
+                    Close Settings. In the Claude Desktop chat bar, click the model selector dropdown in the bottom right corner &mdash; your allowed models (e.g. <b>Claude Sonnet 5.5</b>, <b>Claude Haiku 4.5</b>, <b>Claude 3.7 Sonnet</b>) are now automatically listed and ready to use!
+                </p>
+            </div>
+        </div>
+
+        <!-- TAB 2: Claude Code CLI -->
+        <div id="tab-claude-code" class="doc-tab-content hidden space-y-6">
             
             <div class="p-4 rounded-xl bg-amber-50/70 border border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/20 text-xs text-amber-900 dark:text-amber-200">
                 <div class="font-bold flex items-center space-x-1.5 mb-1">

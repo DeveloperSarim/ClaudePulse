@@ -51,9 +51,16 @@ if (php_sapi_name() === 'cli-server') {
 }
 
 // -------------------------------------------------------------
-// 1. API Reverse Proxy Routes (/v1/*)
+// 1. API Reverse Proxy Routes (/v1/*, /models, /messages)
 // -------------------------------------------------------------
-if ($path === '/v1' || str_starts_with($path, '/v1/')) {
+if (
+    $path === '/v1' || 
+    str_starts_with($path, '/v1/') || 
+    $path === '/models' || 
+    str_starts_with($path, '/models/') || 
+    $path === '/messages' || 
+    str_starts_with($path, '/messages/')
+) {
     require __DIR__ . '/api/proxy.php';
     exit;
 }

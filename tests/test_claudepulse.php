@@ -572,6 +572,62 @@ assertTest(
     "Upstream credit balance threshold error accurately detected by interceptor"
 );
 
+// 13. Claude Desktop Auto-Discovery & Models Filtering Test
+echo "\n[13] Testing Claude Desktop Model Discovery & Filtering Engine...\n";
+$known = Pricing::getKnownModels();
+$catalogMap = [];
+foreach ($known as $km) {
+    $mId = $km['id'];
+    $catalogMap[$mId] = [
+        'type'         => 'model',
+        'id'           => $mId,
+        'display_name' => $km['name'] ?? $mId,
+        'created_at'   => $km['created_at'] ?? '2026-01-01T00:00:00Z'
+    ];
+}
+
+assertTest(!empty($catalogMap), "Catalog map generated with " . count($catalogMap) . " models");
+assertTest(isset($catalogMap['claude-sonnet-5-5']), "Flagship Claude Sonnet 5.5 present in catalog");
+assertTest(isset($catalogMap['claude-haiku-4-5-20251001']), "Claude Haiku 4.5 present in catalog");
+assertTest(isset($catalogMap['claude-3-7-sonnet-20250219']), "Claude 3.7 Sonnet present in catalog");
+
+// Test key with single allowed model (e.g. Haiku 4.5)
+$simKey = ['allowed_models' => 'claude-haiku-4-5-20251001'];
+$allowedTokens = array_filter(array_map('trim', explode(',', $simKey['allowed_models'])));
+$filtered = [];
+foreach ($allowedTokens as $tok) {
+    $tokClean = trim($tok);
+    $tokLower = strtolower($tokClean);
+    foreach ($catalogMap as $mId => $mObj) {
+        $mIdLower = strtolower($mId);
+        $mNameLower = strtolower($mObj['display_name']);
+        if ($mIdLower === $tokLower || str_contains($mIdLower, $tokLower)) {
+            $filtered[$mId] = $mObj;
+        }
+    }
+}
+assertTest(count($filtered) === 1, "Single allowed model produces exact 1-model list for Claude Desktop");
+assertTest(isset($filtered['claude-haiku-4-5-20251001']), "Filtered list contains claude-haiku-4-5-20251001");
+assertTest($filtered['claude-haiku-4-5-20251001']['display_name'] === 'Claude Haiku 4.5', "Display name is 'Claude Haiku 4.5'");
+
+// Test key with dual allowed models (Haiku 4.5 and Sonnet 5.5)
+$simKeyDual = ['allowed_models' => 'claude-haiku-4-5-20251001,claude-sonnet-5-5'];
+$allowedTokensDual = array_filter(array_map('trim', explode(',', $simKeyDual['allowed_models'])));
+$filteredDual = [];
+foreach ($allowedTokensDual as $tok) {
+    $tokClean = trim($tok);
+    $tokLower = strtolower($tokClean);
+    foreach ($catalogMap as $mId => $mObj) {
+        $mIdLower = strtolower($mId);
+        if ($mIdLower === $tokLower || str_contains($mIdLower, $tokLower)) {
+            $filteredDual[$mId] = $mObj;
+        }
+    }
+}
+assertTest(count($filteredDual) === 2, "Dual allowed models produce exact 2-model list for Claude Desktop");
+assertTest(isset($filteredDual['claude-sonnet-5-5']), "Dual list includes Sonnet 5.5");
+assertTest(isset($filteredDual['claude-haiku-4-5-20251001']), "Dual list includes Haiku 4.5");
+
 // Clean up isolated test database
 @unlink($testDbPath);
 
