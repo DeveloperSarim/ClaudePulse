@@ -396,7 +396,110 @@ foreach ($allHeaders as $hKey => $hVal) {
     }
 }
 
-// JSON Schema Draft 2020-12 Auto-Repair Engine for Tool Definitions
+// -------------------------------------------------------------
+// JSON Schema Draft 2020-12 Deep Auto-Repair & Sanitization Engine
+// -------------------------------------------------------------
+
+function autoRepairSchemaNode(&$node): void {
+    if (!is_array($node) && !is_object($node)) {
+        return;
+    }
+    if (is_object($node)) {
+        $node = (array)$node;
+    }
+
+    // 1. Remove draft-incompatible metadata keywords from nodes
+    unset($node['$schema'], $node['$id'], $node['id']);
+
+    // 2. Validate & normalize JSON Schema type definitions
+    if (isset($node['type'])) {
+        if (is_string($node['type'])) {
+            $t = strtolower(trim($node['type']));
+            $typeMap = [
+                'int'      => 'integer',
+                'float'    => 'number',
+                'double'   => 'number',
+                'bool'     => 'boolean',
+                'dict'     => 'object',
+                'list'     => 'array',
+                'file'     => 'string',
+                'binary'   => 'string',
+                'date'     => 'string',
+                'datetime' => 'string'
+            ];
+            if (isset($typeMap[$t])) {
+                $node['type'] = $typeMap[$t];
+            } elseif ($t === 'any') {
+                unset($node['type']);
+            } elseif (!in_array($t, ['string', 'number', 'integer', 'boolean', 'array', 'object', 'null'], true)) {
+                $node['type'] = 'string';
+            }
+        } elseif (is_array($node['type'])) {
+            // Union type array, e.g. ["string", "null"]
+            $validTypes = [];
+            foreach ($node['type'] as $subType) {
+                if (is_string($subType)) {
+                    $st = strtolower(trim($subType));
+                    if (in_array($st, ['string', 'number', 'integer', 'boolean', 'array', 'object', 'null'], true)) {
+                        $validTypes[] = $st;
+                    }
+                }
+            }
+            $node['type'] = !empty($validTypes) ? array_values(array_unique($validTypes)) : 'string';
+        }
+    }
+
+    // 3. Handle nullable (OpenAPI 3.0 / legacy Draft-07 style)
+    if (isset($node['nullable'])) {
+        $isNullable = (bool)$node['nullable'];
+        unset($node['nullable']);
+        if ($isNullable && isset($node['type'])) {
+            if (is_string($node['type']) && $node['type'] !== 'null') {
+                $node['type'] = [$node['type'], 'null'];
+            } elseif (is_array($node['type']) && !in_array('null', $node['type'], true)) {
+                $node['type'][] = 'null';
+            }
+        }
+    }
+
+    // 4. Handle required inside individual property definitions (Draft-03/04 legacy)
+    if (isset($node['required']) && is_bool($node['required'])) {
+        unset($node['required']);
+    }
+
+    // 5. Handle empty enum (Draft 2020-12 requires at least one item)
+    if (isset($node['enum']) && is_array($node['enum']) && empty($node['enum'])) {
+        unset($node['enum']);
+    }
+
+    // 6. Handle array items requirement
+    if (isset($node['type']) && ($node['type'] === 'array' || (is_array($node['type']) && in_array('array', $node['type'], true)))) {
+        if (!isset($node['items']) || empty($node['items'])) {
+            $node['items'] = (object)[];
+        }
+    }
+
+    // 7. Enforce object cast for empty dictionary containers
+    foreach (['properties', 'patternProperties', 'definitions', '$defs'] as $k) {
+        if (isset($node[$k]) && is_array($node[$k]) && empty($node[$k])) {
+            $node[$k] = (object)[];
+        }
+    }
+
+    // 8. Recursively sanitize nested property children
+    foreach ($node as $key => &$child) {
+        if ($key === 'properties' && is_array($child)) {
+            foreach ($child as &$propVal) {
+                if (is_array($propVal) || is_object($propVal)) {
+                    autoRepairSchemaNode($propVal);
+                }
+            }
+        } elseif (is_array($child) || is_object($child)) {
+            autoRepairSchemaNode($child);
+        }
+    }
+}
+
 function autoRepairSchema(&$schema): void {
     if (!is_array($schema) && !is_object($schema)) {
         $schema = [
@@ -410,76 +513,105 @@ function autoRepairSchema(&$schema): void {
         $schema = (array)$schema;
     }
 
-    // 1. Root must be type "object" for Anthropic Messages API
-    if (empty($schema['type']) || $schema['type'] !== 'object') {
-        $schema['type'] = 'object';
-    }
+    // Root must be type "object" for Anthropic Messages API
+    $schema['type'] = 'object';
 
-    // 2. Root must have a "properties" object
+    // Remove $schema & $id from root
+    unset($schema['$schema'], $schema['$id'], $schema['id']);
+
+    // Ensure properties is present
     if (!isset($schema['properties']) || !is_array($schema['properties']) || empty($schema['properties'])) {
         $schema['properties'] = (object)[];
     } else {
-        // Sanitize each property definition
-        foreach ($schema['properties'] as $propKey => &$propVal) {
+        $discoveredRequired = [];
+        foreach ($schema['properties'] as $propName => &$propVal) {
             if (is_array($propVal)) {
-                // OpenAI style nullable -> draft 2020-12 array type
-                if (isset($propVal['nullable'])) {
-                    $isNullable = (bool)$propVal['nullable'];
-                    unset($propVal['nullable']);
-                    if ($isNullable && isset($propVal['type']) && is_string($propVal['type']) && $propVal['type'] !== 'null') {
-                        $propVal['type'] = [$propVal['type'], 'null'];
+                if (isset($propVal['required']) && $propVal['required'] === true) {
+                    $discoveredRequired[] = (string)$propName;
+                    unset($propVal['required']);
+                }
+                autoRepairSchemaNode($propVal);
+            }
+        }
+        unset($propVal);
+
+        // Merge discovered required into root
+        if (!empty($discoveredRequired)) {
+            $existingReq = isset($schema['required']) && is_array($schema['required']) ? $schema['required'] : [];
+            $schema['required'] = array_values(array_unique(array_merge($existingReq, $discoveredRequired)));
+        }
+    }
+
+    // Validate and clean root "required" array
+    if (isset($schema['required'])) {
+        if (!is_array($schema['required']) || empty($schema['required'])) {
+            unset($schema['required']);
+        } else {
+            $validReq = [];
+            $propKeys = is_array($schema['properties']) ? array_keys($schema['properties']) : [];
+            foreach ($schema['required'] as $reqField) {
+                if (is_string($reqField)) {
+                    if (empty($propKeys) || in_array($reqField, $propKeys, true)) {
+                        $validReq[] = $reqField;
                     }
                 }
-                autoRepairNestedSchemaNodes($propVal);
+            }
+            if (!empty($validReq)) {
+                $schema['required'] = array_values(array_unique($validReq));
+            } else {
+                unset($schema['required']);
             }
         }
     }
 
-    // 3. Remove draft-incompatible top-level keys if any
-    unset($schema['$schema']);
-}
-
-function autoRepairNestedSchemaNodes(&$node): void {
-    if (!is_array($node)) return;
-
-    if (isset($node['type']) && $node['type'] === 'object') {
-        if (!isset($node['properties']) || (is_array($node['properties']) && empty($node['properties']))) {
-            $node['properties'] = (object)[];
-        }
-    }
-    if (isset($node['properties']) && is_array($node['properties']) && empty($node['properties'])) {
-        $node['properties'] = (object)[];
-    }
-    if (isset($node['patternProperties']) && is_array($node['patternProperties']) && empty($node['patternProperties'])) {
-        $node['patternProperties'] = (object)[];
-    }
-    if (isset($node['definitions']) && is_array($node['definitions']) && empty($node['definitions'])) {
-        $node['definitions'] = (object)[];
-    }
-    if (isset($node['$defs']) && is_array($node['$defs']) && empty($node['$defs'])) {
-        $node['$defs'] = (object)[];
-    }
-
-    foreach ($node as &$child) {
-        if (is_array($child)) {
-            autoRepairNestedSchemaNodes($child);
-        }
+    // Enforce object cast for empty properties
+    if (is_array($schema['properties']) && empty($schema['properties'])) {
+        $schema['properties'] = (object)[];
     }
 }
 
 function autoRepairToolsList(&$tools): void {
-    if (!is_array($tools)) return;
-    foreach ($tools as &$tool) {
-        if (!is_array($tool)) continue;
-        if (isset($tool['input_schema'])) {
+    if (!is_array($tools)) {
+        $tools = [];
+        return;
+    }
+
+    $sanitized = [];
+    foreach ($tools as $tool) {
+        if (!is_array($tool) && !is_object($tool)) continue;
+        if (is_object($tool)) $tool = (array)$tool;
+
+        // Custom tools must have a name
+        $name = $tool['name'] ?? ($tool['custom']['name'] ?? null);
+        if (empty($name) && !isset($tool['type'])) {
+            continue; // Skip malformed tool missing name
+        }
+
+        // Auto-initialize input_schema if missing, null, or empty
+        if (!isset($tool['input_schema']) || (!is_array($tool['input_schema']) && !is_object($tool['input_schema']))) {
+            $tool['input_schema'] = [
+                'type' => 'object',
+                'properties' => (object)[]
+            ];
+        } else {
             autoRepairSchema($tool['input_schema']);
         }
+
         if (isset($tool['custom']) && is_array($tool['custom'])) {
-            if (isset($tool['custom']['input_schema'])) {
+            if (!isset($tool['custom']['input_schema']) || (!is_array($tool['custom']['input_schema']) && !is_object($tool['custom']['input_schema']))) {
+                $tool['custom']['input_schema'] = [
+                    'type' => 'object',
+                    'properties' => (object)[]
+                ];
+            } else {
                 autoRepairSchema($tool['custom']['input_schema']);
             }
         }
+
+        $sanitized[] = $tool;
     }
+
+    $tools = $sanitized;
 }
 
 $needsReencode = false;
@@ -566,7 +698,9 @@ $ttftMs = 0;
 $firstChunkTime = 0.0;
 $rawSseBuffer = '';
 
-// Attempt proxying with upstream key (with fallback if enabled)
+// Attempt proxying with upstream key (with fallback & automatic tool-healing if enabled)
+$maxToolHealingRetries = 3;
+
 foreach ($upstreamKeys as $index => $upstreamRow) {
     try {
         $decryptedApiKey = Crypto::decrypt($upstreamRow['api_key_encrypted']);
@@ -595,163 +729,256 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
         $headersToSend[] = 'anthropic-beta: ' . $existingBeta;
     }
 
-    $ch = curl_init($targetUrl);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headersToSend);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $_SERVER['REQUEST_METHOD']);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 600);
+    $requestSucceeded = false;
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' || $_SERVER['REQUEST_METHOD'] === 'PUT') {
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $rawInput);
-    }
+    // Inner Healing Loop: auto-recovers from invalid client tools (e.g. Claude Desktop Cowork tool #7)
+    for ($healingAttempt = 0; $healingAttempt <= $maxToolHealingRetries; $healingAttempt++) {
+        $ch = curl_init($targetUrl);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headersToSend);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $_SERVER['REQUEST_METHOD']);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 600);
 
-    if ($isStreaming) {
-        // Setup SSE streaming
-        $headersSent = false;
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' || $_SERVER['REQUEST_METHOD'] === 'PUT') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $rawInput);
+        }
 
-        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $chunk) use (
-            &$headersSent,
-            &$firstChunkTime,
-            &$ttftMs,
-            $startTime,
-            &$rawSseBuffer,
-            &$inputTokens,
-            &$outputTokens,
-            &$cacheCreationTokens,
-            &$cacheReadTokens,
-            &$resolvedModel,
-            &$finalStatusCode
-        ) {
-            $chunkLen = strlen($chunk);
-            if ($chunkLen === 0) {
-                return 0;
-            }
+        if ($isStreaming) {
+            // Setup SSE streaming with error intercept & auto-heal buffer
+            $headersSent = false;
+            $errorBodyBuffer = '';
 
-            // Send SSE headers on first chunk
-            if (!$headersSent) {
+            curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $chunk) use (
+                &$headersSent,
+                &$firstChunkTime,
+                &$ttftMs,
+                $startTime,
+                &$rawSseBuffer,
+                &$inputTokens,
+                &$outputTokens,
+                &$cacheCreationTokens,
+                &$cacheReadTokens,
+                &$resolvedModel,
+                &$finalStatusCode,
+                &$errorBodyBuffer
+            ) {
+                $chunkLen = strlen($chunk);
+                if ($chunkLen === 0) {
+                    return 0;
+                }
+
                 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 $finalStatusCode = $httpCode;
 
-                if ($firstChunkTime === 0.0) {
-                    $firstChunkTime = microtime(true);
-                    $ttftMs = (int)round(($firstChunkTime - $startTime) * 1000);
+                // If upstream returns an error status (>= 400), DO NOT flush headers to client yet!
+                // Buffer the error response so we can heal tools or perform key fallback.
+                if ($httpCode >= 400) {
+                    $errorBodyBuffer .= $chunk;
+                    return $chunkLen;
                 }
 
-                http_response_code($httpCode > 0 ? $httpCode : 200);
-                header('Content-Type: text/event-stream; charset=utf-8');
-                header('Cache-Control: no-cache, no-transform');
-                header('Connection: keep-alive');
-                header('X-Accel-Buffering: no');
-                header('Access-Control-Allow-Origin: *');
-                $headersSent = true;
-            }
+                // Upstream returned 200 OK: Send real SSE headers on first chunk
+                if (!$headersSent) {
+                    if ($firstChunkTime === 0.0) {
+                        $firstChunkTime = microtime(true);
+                        $ttftMs = (int)round(($firstChunkTime - $startTime) * 1000);
+                    }
 
-            // Stream chunk immediately to client terminal / UI
-            echo $chunk;
-            flush();
+                    http_response_code($httpCode > 0 ? $httpCode : 200);
+                    header('Content-Type: text/event-stream; charset=utf-8');
+                    header('Cache-Control: no-cache, no-transform');
+                    header('Connection: keep-alive');
+                    header('X-Accel-Buffering: no');
+                    header('Access-Control-Allow-Origin: *');
+                    $headersSent = true;
+                }
 
-            // Accumulate buffer to parse usage events in the background
-            $rawSseBuffer .= $chunk;
-            if (str_contains($rawSseBuffer, "\n")) {
-                $lines = explode("\n", $rawSseBuffer);
-                $rawSseBuffer = array_pop($lines); // keep unfinished trailing line
+                // Stream chunk immediately to client terminal / UI
+                echo $chunk;
+                flush();
 
-                foreach ($lines as $line) {
-                    $line = trim($line);
-                    if (str_starts_with($line, 'data: ')) {
-                        $jsonPayload = substr($line, 6);
-                        if ($jsonPayload === '[DONE]') {
-                            continue;
-                        }
-                        $eventData = json_decode($jsonPayload, true);
-                        if (!is_array($eventData)) {
-                            continue;
-                        }
+                // Accumulate buffer to parse usage events in the background
+                $rawSseBuffer .= $chunk;
+                if (str_contains($rawSseBuffer, "\n")) {
+                    $lines = explode("\n", $rawSseBuffer);
+                    $rawSseBuffer = array_pop($lines);
 
-                        $type = $eventData['type'] ?? '';
-
-                        // Capture input usage & model from message_start
-                        if ($type === 'message_start' && isset($eventData['message'])) {
-                            if (!empty($eventData['message']['model'])) {
-                                $resolvedModel = $eventData['message']['model'];
+                    foreach ($lines as $line) {
+                        $line = trim($line);
+                        if (str_starts_with($line, 'data: ')) {
+                            $jsonPayload = substr($line, 6);
+                            if ($jsonPayload === '[DONE]') {
+                                continue;
                             }
-                            if (isset($eventData['message']['usage'])) {
-                                $u = $eventData['message']['usage'];
-                                $inputTokens = (int)($u['input_tokens'] ?? 0);
-                                $cacheCreationTokens = (int)($u['cache_creation_input_tokens'] ?? 0);
-                                $cacheReadTokens = (int)($u['cache_read_input_tokens'] ?? 0);
+                            $eventData = json_decode($jsonPayload, true);
+                            if (!is_array($eventData)) {
+                                continue;
                             }
-                        }
 
-                        // Capture output tokens from message_delta
-                        if ($type === 'message_delta' && isset($eventData['usage'])) {
-                            $outputTokens += (int)($eventData['usage']['output_tokens'] ?? 0);
+                            $type = $eventData['type'] ?? '';
+
+                            // Capture input usage & model from message_start
+                            if ($type === 'message_start' && isset($eventData['message'])) {
+                                if (!empty($eventData['message']['model'])) {
+                                    $resolvedModel = $eventData['message']['model'];
+                                }
+                                if (isset($eventData['message']['usage'])) {
+                                    $u = $eventData['message']['usage'];
+                                    $inputTokens = (int)($u['input_tokens'] ?? 0);
+                                    $cacheCreationTokens = (int)($u['cache_creation_input_tokens'] ?? 0);
+                                    $cacheReadTokens = (int)($u['cache_read_input_tokens'] ?? 0);
+                                }
+                            }
+
+                            // Capture output tokens from message_delta
+                            if ($type === 'message_delta' && isset($eventData['usage'])) {
+                                $outputTokens += (int)($eventData['usage']['output_tokens'] ?? 0);
+                            }
                         }
                     }
                 }
+
+                return $chunkLen;
+            });
+
+            curl_exec($ch);
+            $finalStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+
+            if ($curlError) {
+                $finalErrorMsg = $curlError;
             }
 
-            return $chunkLen;
-        });
+            // Check if request was 200 OK stream
+            if ($finalStatusCode >= 200 && $finalStatusCode < 300) {
+                $requestSucceeded = true;
+                break 2; // Success! Break out of both healing loop and upstream keys loop
+            }
 
-        curl_exec($ch);
-        $finalStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        if ($curlError) {
-            $finalErrorMsg = $curlError;
-        }
-
-        // If streaming started, we already sent response to client, break out of fallback loop
-        break;
-    } else {
-        // Non-streaming request
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        $responseBody = curl_exec($ch);
-        $finalStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        if ($curlError) {
-            $finalErrorMsg = $curlError;
-        }
-
-        // Fallback retry condition: 429 (Rate Limit) or 529 (Overloaded) or 401 (Invalid Key)
-        if (($finalStatusCode === 429 || $finalStatusCode === 529 || $finalStatusCode === 401)
-            && $autoFallback
-            && ($index + 1 < count($upstreamKeys))) {
-            // Try next key in loop
-            continue;
-        }
-
-        // Parse non-streaming JSON response for token usage
-        if ($responseBody !== false) {
-            $jsonResp = json_decode($responseBody, true);
-            if (is_array($jsonResp)) {
-                if (!empty($jsonResp['model'])) {
-                    $resolvedModel = $jsonResp['model'];
+            // Check for Tool Schema Validation Error from Anthropic (e.g. Cowork Tool #7 or MCP invalid schema)
+            $finalErrorMsg = $errorBodyBuffer;
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                !empty($body['tools']) &&
+                is_array($body['tools']) &&
+                (preg_match('/tools\.(\d+)/i', $errorBodyBuffer, $toolMatch) || str_contains($errorBodyBuffer, 'input_schema') || str_contains($errorBodyBuffer, 'JSON schema is invalid'))
+            ) {
+                // Drop or heal the offending tool
+                if (!empty($toolMatch[1]) && isset($body['tools'][(int)$toolMatch[1]])) {
+                    $badIdx = (int)$toolMatch[1];
+                    array_splice($body['tools'], $badIdx, 1);
+                } else {
+                    array_pop($body['tools']);
                 }
-                if (isset($jsonResp['usage'])) {
-                    $u = $jsonResp['usage'];
-                    $inputTokens = (int)($u['input_tokens'] ?? 0);
-                    $outputTokens = (int)($u['output_tokens'] ?? 0);
-                    $cacheCreationTokens = (int)($u['cache_creation_input_tokens'] ?? 0);
-                    $cacheReadTokens = (int)($u['cache_read_input_tokens'] ?? 0);
+
+                $body['tools'] = array_values($body['tools']);
+                autoRepairToolsList($body['tools']);
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue; // Retry with healed tools payload!
+            }
+
+            // Fallback retry condition: 429 (Rate Limit) or 529 (Overloaded) or 401 (Invalid Key)
+            if (($finalStatusCode === 429 || $finalStatusCode === 529 || $finalStatusCode === 401)
+                && $autoFallback
+                && ($index + 1 < count($upstreamKeys))) {
+                break 1; // Try next upstream key in outer loop
+            }
+
+            // Terminal error: deliver buffered error to client
+            if (!$headersSent) {
+                http_response_code($finalStatusCode > 0 ? $finalStatusCode : 400);
+                header('Content-Type: application/json; charset=utf-8');
+                header('Access-Control-Allow-Origin: *');
+                echo !empty($errorBodyBuffer) ? $errorBodyBuffer : json_encode([
+                    'type' => 'error',
+                    'error' => ['type' => 'api_error', 'message' => $finalErrorMsg ?: 'Upstream proxy request failed.']
+                ]);
+            }
+            break 2;
+        } else {
+            // Non-streaming request
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            $responseBody = curl_exec($ch);
+            $finalStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+
+            if ($curlError) {
+                $finalErrorMsg = $curlError;
+            }
+
+            // Check if request was 200 OK
+            if ($finalStatusCode >= 200 && $finalStatusCode < 300) {
+                if ($responseBody !== false) {
+                    $jsonResp = json_decode($responseBody, true);
+                    if (is_array($jsonResp)) {
+                        if (!empty($jsonResp['model'])) {
+                            $resolvedModel = $jsonResp['model'];
+                        }
+                        if (isset($jsonResp['usage'])) {
+                            $u = $jsonResp['usage'];
+                            $inputTokens = (int)($u['input_tokens'] ?? 0);
+                            $outputTokens = (int)($u['output_tokens'] ?? 0);
+                            $cacheCreationTokens = (int)($u['cache_creation_input_tokens'] ?? 0);
+                            $cacheReadTokens = (int)($u['cache_read_input_tokens'] ?? 0);
+                        }
+                    }
+                    http_response_code($finalStatusCode);
+                    header('Content-Type: application/json; charset=utf-8');
+                    header('Access-Control-Allow-Origin: *');
+                    echo $responseBody;
                 }
-                if (isset($jsonResp['error']['message'])) {
+                $requestSucceeded = true;
+                break 2;
+            }
+
+            // Check for Tool Schema Validation Error in non-streaming response
+            $respStr = (string)$responseBody;
+            $finalErrorMsg = $respStr;
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                !empty($body['tools']) &&
+                is_array($body['tools']) &&
+                (preg_match('/tools\.(\d+)/i', $respStr, $toolMatch) || str_contains($respStr, 'input_schema') || str_contains($respStr, 'JSON schema is invalid'))
+            ) {
+                if (!empty($toolMatch[1]) && isset($body['tools'][(int)$toolMatch[1]])) {
+                    $badIdx = (int)$toolMatch[1];
+                    array_splice($body['tools'], $badIdx, 1);
+                } else {
+                    array_pop($body['tools']);
+                }
+
+                $body['tools'] = array_values($body['tools']);
+                autoRepairToolsList($body['tools']);
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue; // Retry with healed payload!
+            }
+
+            // Fallback retry condition: 429 (Rate Limit) or 529 (Overloaded) or 401 (Invalid Key)
+            if (($finalStatusCode === 429 || $finalStatusCode === 529 || $finalStatusCode === 401)
+                && $autoFallback
+                && ($index + 1 < count($upstreamKeys))) {
+                break 1; // Try next key in outer loop
+            }
+
+            // Non-streaming final error delivery
+            if ($responseBody !== false) {
+                $jsonResp = json_decode($responseBody, true);
+                if (is_array($jsonResp) && isset($jsonResp['error']['message'])) {
                     $finalErrorMsg = $jsonResp['error']['message'];
                 }
+                http_response_code($finalStatusCode > 0 ? $finalStatusCode : 400);
+                header('Content-Type: application/json; charset=utf-8');
+                header('Access-Control-Allow-Origin: *');
+                echo $responseBody;
             }
-
-            http_response_code($finalStatusCode > 0 ? $finalStatusCode : 200);
-            header('Content-Type: application/json; charset=utf-8');
-            header('Access-Control-Allow-Origin: *');
-            echo $responseBody;
+            break 2;
         }
-        break;
     }
 }
 

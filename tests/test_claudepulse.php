@@ -293,47 +293,135 @@ assertTest(!isset($samplePayload['tools'][0]['cache_control']), "Earlier tool de
 // 8. Tool Schema Auto-Repair for Draft 2020-12
 echo "\n[8] Testing Tool Schema Auto-Repair (Draft 2020-12 Compliance)...\n";
 
+function autoRepairSchemaNodeTest(&$node): void {
+    if (!is_array($node) && !is_object($node)) return;
+    if (is_object($node)) $node = (array)$node;
+
+    unset($node['$schema'], $node['$id'], $node['id']);
+
+    if (isset($node['type'])) {
+        if (is_string($node['type'])) {
+            $t = strtolower(trim($node['type']));
+            $typeMap = ['int' => 'integer', 'float' => 'number', 'bool' => 'boolean', 'dict' => 'object', 'list' => 'array'];
+            if (isset($typeMap[$t])) $node['type'] = $typeMap[$t];
+            elseif ($t === 'any') unset($node['type']);
+            elseif (!in_array($t, ['string', 'number', 'integer', 'boolean', 'array', 'object', 'null'], true)) $node['type'] = 'string';
+        }
+    }
+
+    if (isset($node['nullable'])) {
+        $isNullable = (bool)$node['nullable'];
+        unset($node['nullable']);
+        if ($isNullable && isset($node['type'])) {
+            if (is_string($node['type']) && $node['type'] !== 'null') {
+                $node['type'] = [$node['type'], 'null'];
+            }
+        }
+    }
+
+    if (isset($node['required']) && is_bool($node['required'])) {
+        unset($node['required']);
+    }
+
+    if (isset($node['enum']) && is_array($node['enum']) && empty($node['enum'])) {
+        unset($node['enum']);
+    }
+
+    if (isset($node['type']) && ($node['type'] === 'array' || (is_array($node['type']) && in_array('array', $node['type'], true)))) {
+        if (!isset($node['items']) || empty($node['items'])) $node['items'] = (object)[];
+    }
+
+    foreach (['properties', 'patternProperties', 'definitions', '$defs'] as $k) {
+        if (isset($node[$k]) && is_array($node[$k]) && empty($node[$k])) $node[$k] = (object)[];
+    }
+
+    foreach ($node as $key => &$child) {
+        if ($key === 'properties' && is_array($child)) {
+            foreach ($child as &$propVal) {
+                if (is_array($propVal) || is_object($propVal)) autoRepairSchemaNodeTest($propVal);
+            }
+        } elseif (is_array($child) || is_object($child)) {
+            autoRepairSchemaNodeTest($child);
+        }
+    }
+}
+
 function autoRepairSchemaTest(&$schema): void {
     if (!is_array($schema) && !is_object($schema)) {
         $schema = ['type' => 'object', 'properties' => (object)[]];
         return;
     }
     if (is_object($schema)) $schema = (array)$schema;
-    if (empty($schema['type']) || $schema['type'] !== 'object') {
-        $schema['type'] = 'object';
-    }
+
+    $schema['type'] = 'object';
+    unset($schema['$schema'], $schema['$id'], $schema['id']);
+
     if (!isset($schema['properties']) || !is_array($schema['properties']) || empty($schema['properties'])) {
         $schema['properties'] = (object)[];
     } else {
-        foreach ($schema['properties'] as $propKey => &$propVal) {
+        $discoveredRequired = [];
+        foreach ($schema['properties'] as $propName => &$propVal) {
             if (is_array($propVal)) {
-                if (isset($propVal['nullable'])) {
-                    $isNullable = (bool)$propVal['nullable'];
-                    unset($propVal['nullable']);
-                    if ($isNullable && isset($propVal['type']) && is_string($propVal['type']) && $propVal['type'] !== 'null') {
-                        $propVal['type'] = [$propVal['type'], 'null'];
-                    }
+                if (isset($propVal['required']) && $propVal['required'] === true) {
+                    $discoveredRequired[] = (string)$propName;
+                    unset($propVal['required']);
                 }
+                autoRepairSchemaNodeTest($propVal);
             }
         }
+        if (!empty($discoveredRequired)) {
+            $existingReq = isset($schema['required']) && is_array($schema['required']) ? $schema['required'] : [];
+            $schema['required'] = array_values(array_unique(array_merge($existingReq, $discoveredRequired)));
+        }
+    }
+
+    if (isset($schema['required'])) {
+        if (!is_array($schema['required']) || empty($schema['required'])) {
+            unset($schema['required']);
+        }
+    }
+
+    if (is_array($schema['properties']) && empty($schema['properties'])) {
+        $schema['properties'] = (object)[];
     }
 }
 
 function autoRepairToolsListTest(&$tools): void {
-    if (!is_array($tools)) return;
-    foreach ($tools as &$tool) {
-        if (!is_array($tool)) continue;
-        if (isset($tool['input_schema'])) autoRepairSchemaTest($tool['input_schema']);
-        if (isset($tool['custom']) && is_array($tool['custom']) && isset($tool['custom']['input_schema'])) {
-            autoRepairSchemaTest($tool['custom']['input_schema']);
-        }
+    if (!is_array($tools)) {
+        $tools = [];
+        return;
     }
+    $sanitized = [];
+    foreach ($tools as $tool) {
+        if (!is_array($tool) && !is_object($tool)) continue;
+        if (is_object($tool)) $tool = (array)$tool;
+        $name = $tool['name'] ?? ($tool['custom']['name'] ?? null);
+        if (empty($name) && !isset($tool['type'])) continue;
+
+        if (!isset($tool['input_schema']) || (!is_array($tool['input_schema']) && !is_object($tool['input_schema']))) {
+            $tool['input_schema'] = ['type' => 'object', 'properties' => (object)[]];
+        } else {
+            autoRepairSchemaTest($tool['input_schema']);
+        }
+
+        if (isset($tool['custom']) && is_array($tool['custom'])) {
+            if (!isset($tool['custom']['input_schema'])) {
+                $tool['custom']['input_schema'] = ['type' => 'object', 'properties' => (object)[]];
+            } else {
+                autoRepairSchemaTest($tool['custom']['input_schema']);
+            }
+        }
+        $sanitized[] = $tool;
+    }
+    $tools = $sanitized;
 }
 
 $problematicTools = [
     ['name' => 'no_props_tool', 'input_schema' => []],
     ['type' => 'custom', 'custom' => ['name' => 'custom_tool_7', 'input_schema' => ['properties' => []]]],
-    ['name' => 'nullable_tool', 'input_schema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string', 'nullable' => true]]]]
+    ['name' => 'nullable_tool', 'input_schema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string', 'nullable' => true]]]],
+    ['name' => 'missing_schema_tool'], // Missing input_schema
+    ['name' => 'legacy_types_tool', 'input_schema' => ['type' => 'object', 'properties' => ['count' => ['type' => 'int'], 'config' => ['type' => 'dict']]]]
 ];
 
 autoRepairToolsListTest($problematicTools);
@@ -342,6 +430,25 @@ assertTest(str_contains($jsonOutput, '"properties":{}'), "Empty properties encod
 assertTest(!str_contains($jsonOutput, '"properties":[]'), "Empty properties NEVER encoded as array ([])");
 assertTest(str_contains($jsonOutput, '"type":["string","null"]'), "Nullable keyword auto-converted to Draft 2020-12 union type");
 assertTest(str_contains($jsonOutput, '"type":"object"'), "Root object type enforced across all tool definitions");
+assertTest(str_contains($jsonOutput, '"count":{"type":"integer"}'), "Legacy type 'int' converted to Draft 2020-12 'integer'");
+assertTest(str_contains($jsonOutput, '"config":{"type":"object"'), "Legacy type 'dict' converted to Draft 2020-12 'object'");
+
+// 9. Upstream Error Intercept & Bad Tool Auto-Healing
+echo "\n[9] Testing Upstream Tool Error Extraction & Auto-Healing...\n";
+$upstreamAnthropicError = 'API Error: 400 tools.7.custom.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12 (https://json-schema.org/draft/2020-12).';
+preg_match('/tools\.(\d+)/i', $upstreamAnthropicError, $extractedBadTool);
+assertTest(!empty($extractedBadTool[1]) && (int)$extractedBadTool[1] === 7, "Regex accurately parsed bad tool index (7) from Anthropic error string");
+
+// Test dropping bad tool from tools array
+$simulatedTools = [
+    ['name' => 'tool_0'], ['name' => 'tool_1'], ['name' => 'tool_2'], ['name' => 'tool_3'],
+    ['name' => 'tool_4'], ['name' => 'tool_5'], ['name' => 'tool_6'], ['name' => 'tool_7_broken']
+];
+assertTest(count($simulatedTools) === 8, "Simulated tools count is 8");
+$badIndex = (int)$extractedBadTool[1];
+array_splice($simulatedTools, $badIndex, 1);
+assertTest(count($simulatedTools) === 7, "Broken tool_7 removed: remaining count is 7");
+assertTest(!in_array('tool_7_broken', array_column($simulatedTools, 'name'), true), "Offending tool_7_broken purged from tools list");
 
 // Clean up isolated test database
 @unlink($testDbPath);
