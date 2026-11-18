@@ -297,7 +297,7 @@ class Pricing
     public static function getDefaultFallbackCatalog(): array
     {
         return [
-            // --- RECOMMENDED FLAGSHIP & STANDARD MODELS FIRST FOR CLAUDE DESKTOP & CLI ---
+            // --- VERIFIED ACTIVE FRONTIER & STANDARD MODELS FOR PROMOTIONAL CREDITS ---
             [
                 'id' => 'claude-sonnet-5-5',
                 'name' => 'Claude Sonnet 5.5',
@@ -311,20 +311,6 @@ class Pricing
                 'context_window' => 1000000,
                 'max_output' => 128000,
                 'created_at' => '2026-09-28T00:00:00Z'
-            ],
-            [
-                'id' => 'claude-3-7-sonnet-20250219',
-                'name' => 'Claude 3.7 Sonnet',
-                'alias' => 'claude-3-7-sonnet-latest',
-                'badge' => 'Hybrid Reasoning',
-                'tier' => 'Extended Thinking & Code',
-                'description' => 'Hybrid reasoning model with extended thinking mode and high-speed precision coding capability',
-                'input_price' => '$3.00 / MTok',
-                'output_price' => '$15.00 / MTok',
-                'cache_read' => '$0.30 / MTok',
-                'context_window' => 200000,
-                'max_output' => 64000,
-                'created_at' => '2025-02-19T00:00:00Z'
             ],
             [
                 'id' => 'claude-haiku-4-5-20251001',
@@ -353,20 +339,6 @@ class Pricing
                 'context_window' => 1000000,
                 'max_output' => 128000,
                 'created_at' => '2026-10-07T18:00:00Z'
-            ],
-            [
-                'id' => 'claude-3-5-sonnet-20241022',
-                'name' => 'Claude 3.5 Sonnet',
-                'alias' => 'claude-3-5-sonnet-latest',
-                'badge' => 'Frontier Intelligence',
-                'tier' => 'State-of-the-Art Coding',
-                'description' => 'Standard frontier coding and multimodal intelligence with 200k context window',
-                'input_price' => '$3.00 / MTok',
-                'output_price' => '$15.00 / MTok',
-                'cache_read' => '$0.30 / MTok',
-                'context_window' => 200000,
-                'max_output' => 64000,
-                'created_at' => '2024-10-22T00:00:00Z'
             ],
             [
                 'id' => 'claude-opus-5-5',
@@ -451,6 +423,34 @@ class Pricing
                 'context_window' => 200000,
                 'max_output' => 64000,
                 'created_at' => '2025-11-24T00:00:00Z'
+            ],
+            [
+                'id' => 'claude-3-7-sonnet-20250219',
+                'name' => 'Claude 3.7 Sonnet',
+                'alias' => 'claude-3-7-sonnet-latest',
+                'badge' => 'Hybrid Reasoning',
+                'tier' => 'Extended Thinking & Code',
+                'description' => 'Hybrid reasoning model mapped seamlessly to flagship intelligence',
+                'input_price' => '$3.00 / MTok',
+                'output_price' => '$15.00 / MTok',
+                'cache_read' => '$0.30 / MTok',
+                'context_window' => 200000,
+                'max_output' => 64000,
+                'created_at' => '2025-02-19T00:00:00Z'
+            ],
+            [
+                'id' => 'claude-3-5-sonnet-20241022',
+                'name' => 'Claude 3.5 Sonnet',
+                'alias' => 'claude-3-5-sonnet-latest',
+                'badge' => 'Frontier Intelligence',
+                'tier' => 'State-of-the-Art Coding',
+                'description' => 'Standard frontier coding and multimodal intelligence with 200k context window',
+                'input_price' => '$3.00 / MTok',
+                'output_price' => '$15.00 / MTok',
+                'cache_read' => '$0.30 / MTok',
+                'context_window' => 200000,
+                'max_output' => 64000,
+                'created_at' => '2024-10-22T00:00:00Z'
             ]
         ];
     }

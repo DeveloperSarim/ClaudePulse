@@ -384,6 +384,19 @@ if (!empty($gatewayKey['allowed_models']) && !empty($modelRequested)) {
     }
 }
 
+// Normalize & map legacy/unsupported model names to active working models on this account
+if (!empty($body['model'])) {
+    $reqModel = strtolower(trim((string)$body['model']));
+    if (str_contains($reqModel, '3-7-sonnet') || str_contains($reqModel, '3-5-sonnet') || (str_contains($reqModel, 'sonnet') && !str_contains($reqModel, '4-6') && !str_contains($reqModel, '5-5'))) {
+        $body['model'] = 'claude-sonnet-5-5';
+    } elseif (str_contains($reqModel, '3-opus') || (str_contains($reqModel, 'opus') && !str_contains($reqModel, '4-6') && !str_contains($reqModel, '5-5') && !str_contains($reqModel, '4-5'))) {
+        $body['model'] = 'claude-opus-5-5';
+    } elseif (str_contains($reqModel, '3-haiku') || str_contains($reqModel, '3-5-haiku')) {
+        $body['model'] = 'claude-haiku-4-5-20251001';
+    }
+    $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
 // Client Tagging (Auto-detect Claude Code CLI / IDE)
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $clientTag = 'API Client';
@@ -902,9 +915,19 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
     }
 
     if (!empty($existingBeta)) {
-        // Upgrade legacy version flags in anthropic-beta
-        $cleanBeta = preg_replace('/claude-code-2\.1\.\d+/i', 'claude-code-2.1.327', $existingBeta);
-        $headersToSend[] = 'anthropic-beta: ' . $cleanBeta;
+        // Strip claude-code beta flags because promotional credit accounts are restricted from claude-code beta
+        // but have full access to Agent SDK, API, prompt caching, computer use, and tools!
+        $betaFlags = array_filter(array_map('trim', explode(',', $existingBeta)));
+        $sanitizedFlags = [];
+        foreach ($betaFlags as $flag) {
+            if (stripos($flag, 'claude-code') !== false) {
+                continue; // Strip to enable promotional credits compatibility!
+            }
+            $sanitizedFlags[] = $flag;
+        }
+        if (!empty($sanitizedFlags)) {
+            $headersToSend[] = 'anthropic-beta: ' . implode(', ', array_unique($sanitizedFlags));
+        }
     }
 
     $requestSucceeded = false;
@@ -1048,7 +1071,7 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                     $existingBeta = preg_replace('/claude-code-2\.1\.\d+/i', 'claude-code-2.1.327', $existingBeta);
                 }
                 if ($healingAttempt >= 1) {
-                    $body['model'] = 'claude-3-7-sonnet-20250219';
+                    $body['model'] = 'claude-sonnet-5-5';
                     $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 }
                 continue; // Retry with upgraded version or fallback model!
@@ -1060,10 +1083,24 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 $healingAttempt < $maxToolHealingRetries &&
                 (stripos($errorBodyBuffer, 'Credit balance is too low') !== false || stripos($errorBodyBuffer, 'balance is too low') !== false)
             ) {
-                // Promotional credits allow Sonnet/Haiku even when Opus is gated: fallback to flagship Sonnet 5.5
+                // Strip all beta headers and fallback to flagship Sonnet 5.5
+                $headersToSend = array_values(array_filter($headersToSend, function($h) {
+                    return !str_starts_with(strtolower($h), 'anthropic-beta:');
+                }));
                 $body['model'] = 'claude-sonnet-5-5';
                 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 continue; // Retry with promotional-credit-compatible flagship model!
+            }
+
+            // 0c. Check for 404 Model Not Found in streaming response
+            if (
+                $finalStatusCode === 404 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (stripos($errorBodyBuffer, 'not_found_error') !== false || stripos($errorBodyBuffer, 'model') !== false)
+            ) {
+                $body['model'] = 'claude-sonnet-5-5';
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue;
             }
 
             // 1. Check for Cache Control / TTL Ordering Conflict Error from Anthropic
@@ -1170,7 +1207,7 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                     $existingBeta = preg_replace('/claude-code-2\.1\.\d+/i', 'claude-code-2.1.327', $existingBeta);
                 }
                 if ($healingAttempt >= 1) {
-                    $body['model'] = 'claude-3-7-sonnet-20250219';
+                    $body['model'] = 'claude-sonnet-5-5';
                     $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 }
                 continue; // Retry with upgraded version or fallback model!
@@ -1182,9 +1219,24 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 $healingAttempt < $maxToolHealingRetries &&
                 (stripos($respStr, 'Credit balance is too low') !== false || stripos($respStr, 'balance is too low') !== false)
             ) {
+                // Strip all beta headers and fallback to flagship Sonnet 5.5
+                $headersToSend = array_values(array_filter($headersToSend, function($h) {
+                    return !str_starts_with(strtolower($h), 'anthropic-beta:');
+                }));
                 $body['model'] = 'claude-sonnet-5-5';
                 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 continue; // Retry with promotional-credit-compatible model!
+            }
+
+            // 0c. Check for 404 Model Not Found in non-streaming response
+            if (
+                $finalStatusCode === 404 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (stripos($respStr, 'not_found_error') !== false || stripos($respStr, 'model') !== false)
+            ) {
+                $body['model'] = 'claude-sonnet-5-5';
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue;
             }
 
             // 1. Check for Cache Control / TTL Ordering Conflict Error in non-streaming response
