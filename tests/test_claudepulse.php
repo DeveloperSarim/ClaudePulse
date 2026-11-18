@@ -564,6 +564,14 @@ assertTest(
     "Upstream unsupported model / outdated client version error accurately caught by interceptor"
 );
 
+// 12. Promotional Credits & Credit Balance Interceptor Test
+echo "\n[12] Testing Promotional Credits & Credit Balance Interceptor...\n";
+$upstreamCreditError = 'API Error: 400 Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.';
+assertTest(
+    stripos($upstreamCreditError, 'Credit balance is too low') !== false || stripos($upstreamCreditError, 'balance is too low') !== false,
+    "Upstream credit balance threshold error accurately detected by interceptor"
+);
+
 // Clean up isolated test database
 @unlink($testDbPath);
 

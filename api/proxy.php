@@ -1041,6 +1041,18 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 continue; // Retry with upgraded version or fallback model!
             }
 
+            // 0b. Check for Credit Balance Threshold / Promotional Credit Restriction from Anthropic
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (stripos($errorBodyBuffer, 'Credit balance is too low') !== false || stripos($errorBodyBuffer, 'balance is too low') !== false)
+            ) {
+                // Promotional credits allow Sonnet/Haiku even when Opus is gated: fallback to flagship Sonnet 5.5
+                $body['model'] = 'claude-sonnet-5-5';
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue; // Retry with promotional-credit-compatible flagship model!
+            }
+
             // 1. Check for Cache Control / TTL Ordering Conflict Error from Anthropic
             if (
                 $finalStatusCode === 400 &&
@@ -1149,6 +1161,17 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                     $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 }
                 continue; // Retry with upgraded version or fallback model!
+            }
+
+            // 0b. Check for Credit Balance Threshold / Promotional Credit Restriction in non-streaming response
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (stripos($respStr, 'Credit balance is too low') !== false || stripos($respStr, 'balance is too low') !== false)
+            ) {
+                $body['model'] = 'claude-sonnet-5-5';
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue; // Retry with promotional-credit-compatible model!
             }
 
             // 1. Check for Cache Control / TTL Ordering Conflict Error in non-streaming response
