@@ -622,41 +622,169 @@ if ($endpoint === '/v1/messages' && !empty($body['tools']) && is_array($body['to
     $needsReencode = true;
 }
 
+function requestHasClientCacheControl(array $body): bool {
+    if (!empty($body['tools']) && is_array($body['tools'])) {
+        foreach ($body['tools'] as $tool) {
+            if (is_array($tool) && isset($tool['cache_control'])) {
+                return true;
+            }
+        }
+    }
+    if (!empty($body['system']) && is_array($body['system'])) {
+        foreach ($body['system'] as $sys) {
+            if (is_array($sys) && isset($sys['cache_control'])) {
+                return true;
+            }
+        }
+    }
+    if (!empty($body['messages']) && is_array($body['messages'])) {
+        foreach ($body['messages'] as $msg) {
+            if (is_array($msg) && !empty($msg['content']) && is_array($msg['content'])) {
+                foreach ($msg['content'] as $block) {
+                    if (is_array($block) && isset($block['cache_control'])) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function stripAllCacheControl(array &$body): void {
+    if (!empty($body['tools']) && is_array($body['tools'])) {
+        foreach ($body['tools'] as &$t) {
+            if (is_array($t)) unset($t['cache_control']);
+        }
+        unset($t);
+    }
+    if (!empty($body['system']) && is_array($body['system'])) {
+        foreach ($body['system'] as &$s) {
+            if (is_array($s)) unset($s['cache_control']);
+        }
+        unset($s);
+    }
+    if (!empty($body['messages']) && is_array($body['messages'])) {
+        foreach ($body['messages'] as &$m) {
+            if (is_array($m) && !empty($m['content']) && is_array($m['content'])) {
+                foreach ($m['content'] as &$c) {
+                    if (is_array($c)) unset($c['cache_control']);
+                }
+                unset($c);
+            }
+        }
+        unset($m);
+    }
+}
+
+function harmonizeCacheControl(array &$body): void {
+    // Collect references to cache_control in strict Anthropic evaluation order: tools -> system -> messages
+    $cacheBlocks = [];
+
+    if (!empty($body['tools']) && is_array($body['tools'])) {
+        foreach ($body['tools'] as &$tool) {
+            if (is_array($tool) && isset($tool['cache_control']) && is_array($tool['cache_control'])) {
+                $cacheBlocks[] = &$tool['cache_control'];
+            }
+        }
+        unset($tool);
+    }
+
+    if (!empty($body['system']) && is_array($body['system'])) {
+        foreach ($body['system'] as &$sysBlock) {
+            if (is_array($sysBlock) && isset($sysBlock['cache_control']) && is_array($sysBlock['cache_control'])) {
+                $cacheBlocks[] = &$sysBlock['cache_control'];
+            }
+        }
+        unset($sysBlock);
+    }
+
+    if (!empty($body['messages']) && is_array($body['messages'])) {
+        foreach ($body['messages'] as &$msg) {
+            if (is_array($msg) && !empty($msg['content']) && is_array($msg['content'])) {
+                foreach ($msg['content'] as &$contentBlock) {
+                    if (is_array($contentBlock) && isset($contentBlock['cache_control']) && is_array($contentBlock['cache_control'])) {
+                        $cacheBlocks[] = &$contentBlock['cache_control'];
+                    }
+                }
+                unset($contentBlock);
+            }
+        }
+        unset($msg);
+    }
+
+    if (empty($cacheBlocks)) {
+        return;
+    }
+
+    // Anthropic limit: maximum 4 cache_control breakpoints
+    if (count($cacheBlocks) > 4) {
+        for ($i = 4; $i < count($cacheBlocks); $i++) {
+            $cacheBlocks[$i] = null;
+        }
+    }
+
+    // TTL Ordering Rule: A ttl='1h' block must NOT come after a ttl='5m' block.
+    // If any block is 1h, all preceding cache_control blocks must also be elevated to 1h!
+    $last1hIdx = -1;
+    foreach ($cacheBlocks as $idx => $cc) {
+        if (is_array($cc) && isset($cc['ttl']) && $cc['ttl'] === '1h') {
+            $last1hIdx = $idx;
+        }
+    }
+
+    if ($last1hIdx > 0) {
+        for ($i = 0; $i < $last1hIdx; $i++) {
+            if (is_array($cacheBlocks[$i])) {
+                $cacheBlocks[$i]['ttl'] = '1h';
+            }
+        }
+    }
+}
+
+$clientHasCache = requestHasClientCacheControl($body);
+
 if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
-    // 1. Inject cache_control on system prompt (if present)
-    if (!empty($body['system'])) {
-        if (is_string($body['system'])) {
-            $body['system'] = [
-                [
-                    'type' => 'text',
-                    'text' => $body['system'],
-                    'cache_control' => ['type' => 'ephemeral']
-                ]
-            ];
-            $promptCachingInjected = true;
-        } elseif (is_array($body['system']) && count($body['system']) > 0) {
-            $lastIdx = count($body['system']) - 1;
-            if (is_array($body['system'][$lastIdx]) && !isset($body['system'][$lastIdx]['cache_control'])) {
-                $body['system'][$lastIdx]['cache_control'] = ['type' => 'ephemeral'];
+    // Only inject automatic caching breakpoints if the client did NOT already provide their own!
+    if (!$clientHasCache) {
+        // 1. Inject cache_control on system prompt (if present)
+        if (!empty($body['system'])) {
+            if (is_string($body['system'])) {
+                $body['system'] = [
+                    [
+                        'type' => 'text',
+                        'text' => $body['system'],
+                        'cache_control' => ['type' => 'ephemeral']
+                    ]
+                ];
                 $promptCachingInjected = true;
+            } elseif (is_array($body['system']) && count($body['system']) > 0) {
+                $lastIdx = count($body['system']) - 1;
+                if (is_array($body['system'][$lastIdx]) && !isset($body['system'][$lastIdx]['cache_control'])) {
+                    $body['system'][$lastIdx]['cache_control'] = ['type' => 'ephemeral'];
+                    $promptCachingInjected = true;
+                }
+            }
+        }
+
+        // 2. Inject cache_control on the last tool definition (if standard tool)
+        if (!empty($body['tools']) && is_array($body['tools']) && count($body['tools']) > 0) {
+            $lastToolIdx = count($body['tools']) - 1;
+            $lastTool = &$body['tools'][$lastToolIdx];
+            if (is_array($lastTool) && !isset($lastTool['cache_control'])) {
+                if (isset($lastTool['name']) && !isset($lastTool['type'])) {
+                    $lastTool['cache_control'] = ['type' => 'ephemeral'];
+                    $promptCachingInjected = true;
+                }
             }
         }
     }
 
-    // 2. Inject cache_control on the last tool definition (if standard tool)
-    if (!empty($body['tools']) && is_array($body['tools']) && count($body['tools']) > 0) {
-        $lastToolIdx = count($body['tools']) - 1;
-        $lastTool = &$body['tools'][$lastToolIdx];
-        if (is_array($lastTool) && !isset($lastTool['cache_control'])) {
-            if (isset($lastTool['name']) && !isset($lastTool['type'])) {
-                $lastTool['cache_control'] = ['type' => 'ephemeral'];
-                $promptCachingInjected = true;
-            }
-        }
-    }
+    // Harmonize TTL ordering across tools -> system -> messages
+    harmonizeCacheControl($body);
 
     // 3. Ensure prompt-caching beta header is attached
-    if ($promptCachingInjected) {
+    if ($promptCachingInjected || $clientHasCache) {
         if (empty($existingBeta)) {
             $existingBeta = 'prompt-caching-2024-07-31';
         } elseif (!str_contains($existingBeta, 'prompt-caching')) {
@@ -664,6 +792,9 @@ if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
         }
         $needsReencode = true;
     }
+} else {
+    // Even if autoPromptCaching is off, harmonize if client sent caching
+    harmonizeCacheControl($body);
 }
 
 if ($needsReencode) {
@@ -858,8 +989,22 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 break 2; // Success! Break out of both healing loop and upstream keys loop
             }
 
-            // Check for Tool Schema Validation Error from Anthropic (e.g. Cowork Tool #7 or MCP invalid schema)
+            // 1. Check for Cache Control / TTL Ordering Conflict Error from Anthropic
             $finalErrorMsg = $errorBodyBuffer;
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (str_contains($errorBodyBuffer, 'cache_control') || str_contains($errorBodyBuffer, 'ttl'))
+            ) {
+                stripAllCacheControl($body);
+                if (!empty($body['tools']) && is_array($body['tools'])) {
+                    autoRepairToolsList($body['tools']);
+                }
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue; // Retry with stripped cache_control payload!
+            }
+
+            // 2. Check for Tool Schema Validation Error from Anthropic (e.g. Cowork Tool #7 or MCP invalid schema)
             if (
                 $finalStatusCode === 400 &&
                 $healingAttempt < $maxToolHealingRetries &&
@@ -936,9 +1081,23 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 break 2;
             }
 
-            // Check for Tool Schema Validation Error in non-streaming response
+            // 1. Check for Cache Control / TTL Ordering Conflict Error in non-streaming response
             $respStr = (string)$responseBody;
             $finalErrorMsg = $respStr;
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (str_contains($respStr, 'cache_control') || str_contains($respStr, 'ttl'))
+            ) {
+                stripAllCacheControl($body);
+                if (!empty($body['tools']) && is_array($body['tools'])) {
+                    autoRepairToolsList($body['tools']);
+                }
+                $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                continue; // Retry with stripped cache_control payload!
+            }
+
+            // 2. Check for Tool Schema Validation Error in non-streaming response
             if (
                 $finalStatusCode === 400 &&
                 $healingAttempt < $maxToolHealingRetries &&

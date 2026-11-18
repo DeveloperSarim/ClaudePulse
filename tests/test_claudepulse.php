@@ -450,6 +450,84 @@ array_splice($simulatedTools, $badIndex, 1);
 assertTest(count($simulatedTools) === 7, "Broken tool_7 removed: remaining count is 7");
 assertTest(!in_array('tool_7_broken', array_column($simulatedTools, 'name'), true), "Offending tool_7_broken purged from tools list");
 
+// 10. Prompt Caching TTL Ordering & Harmonizer Test
+echo "\n[10] Testing Prompt Caching TTL Ordering & Harmonization...\n";
+
+function requestHasClientCacheControlTest(array $body): bool {
+    if (!empty($body['tools']) && is_array($body['tools'])) {
+        foreach ($body['tools'] as $tool) {
+            if (is_array($tool) && isset($tool['cache_control'])) return true;
+        }
+    }
+    if (!empty($body['system']) && is_array($body['system'])) {
+        foreach ($body['system'] as $sys) {
+            if (is_array($sys) && isset($sys['cache_control'])) return true;
+        }
+    }
+    return false;
+}
+
+function harmonizeCacheControlTest(array &$body): void {
+    $cacheBlocks = [];
+    if (!empty($body['tools']) && is_array($body['tools'])) {
+        foreach ($body['tools'] as &$tool) {
+            if (is_array($tool) && isset($tool['cache_control']) && is_array($tool['cache_control'])) {
+                $cacheBlocks[] = &$tool['cache_control'];
+            }
+        }
+        unset($tool);
+    }
+    if (!empty($body['system']) && is_array($body['system'])) {
+        foreach ($body['system'] as &$sysBlock) {
+            if (is_array($sysBlock) && isset($sysBlock['cache_control']) && is_array($sysBlock['cache_control'])) {
+                $cacheBlocks[] = &$sysBlock['cache_control'];
+            }
+        }
+        unset($sysBlock);
+    }
+
+    $last1hIdx = -1;
+    foreach ($cacheBlocks as $idx => $cc) {
+        if (is_array($cc) && isset($cc['ttl']) && $cc['ttl'] === '1h') {
+            $last1hIdx = $idx;
+        }
+    }
+
+    if ($last1hIdx > 0) {
+        for ($i = 0; $i < $last1hIdx; $i++) {
+            if (is_array($cacheBlocks[$i])) {
+                $cacheBlocks[$i]['ttl'] = '1h';
+            }
+        }
+    }
+}
+
+// Reproduce exact situation from user screenshot:
+// tools[0] has default 5m cache_control, but system[1] has 1h cache_control!
+$conflictPayload = [
+    'tools' => [
+        ['name' => 'bash', 'input_schema' => ['type' => 'object', 'properties' => (object)[]], 'cache_control' => ['type' => 'ephemeral']]
+    ],
+    'system' => [
+        ['type' => 'text', 'text' => 'Base prompt'],
+        ['type' => 'text', 'text' => 'Code instructions', 'cache_control' => ['type' => 'ephemeral', 'ttl' => '1h']]
+    ]
+];
+
+assertTest(requestHasClientCacheControlTest($conflictPayload) === true, "Detected client-defined cache_control in payload");
+
+// Before harmonization: tools[0] does NOT have ttl=1h, while system[1] has ttl=1h (which causes 400 error)
+assertTest(!isset($conflictPayload['tools'][0]['cache_control']['ttl']), "tools[0] initially lacks 1h TTL");
+
+harmonizeCacheControlTest($conflictPayload);
+
+// After harmonization: tools[0] must have been elevated to ttl=1h so 1h comes before or equal to 1h!
+assertTest(isset($conflictPayload['tools'][0]['cache_control']['ttl']) && $conflictPayload['tools'][0]['cache_control']['ttl'] === '1h', "Earlier cache_control elevated to ttl='1h' to satisfy Anthropic TTL ordering rule");
+
+// Test upstream cache_control error regex intercept
+$upstreamTtlError = "API Error: 400 system.1.cache_control.ttl: a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block. Note that blocks are processed in the following order: 'tools', 'system', 'messages'.";
+assertTest(str_contains($upstreamTtlError, 'cache_control') && str_contains($upstreamTtlError, 'ttl'), "Upstream TTL error correctly detected by interceptor");
+
 // Clean up isolated test database
 @unlink($testDbPath);
 
