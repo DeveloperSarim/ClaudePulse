@@ -188,6 +188,38 @@ $stmtFetch->execute([':id' => $gwTokenKeyId]);
 $gwTokenRowReset = $stmtFetch->fetch();
 assertTest((int)$gwTokenRowReset['used_tokens'] === 0 && (float)$gwTokenRowReset['spent_usd'] === 0.0, "Reset usage resets both spend and used tokens to 0");
 
+// 6c. Gateway Key Vault & Expiration Logic
+echo "\n[6c] Testing Gateway Key Vault Encryption & Expiration...\n";
+$vaultKey = Crypto::generateGatewayKey();
+$encryptedVaultKey = Crypto::encrypt($vaultKey['key']);
+$stmtVault = $db->prepare("
+    INSERT INTO gateway_keys (name, api_key_hash, api_key_prefix, api_key_encrypted, cap_usd, spent_usd, cap_tokens, used_tokens, expires_at, status)
+    VALUES ('Vault & Expiry Test', :hash, :prefix, :enc, 0.0, 0.0, 5000000, 0, datetime('now', '+7 days'), 'active')
+");
+$stmtVault->execute([
+    ':hash'   => $vaultKey['hash'],
+    ':prefix' => $vaultKey['prefix'],
+    ':enc'    => $encryptedVaultKey
+]);
+$vaultKeyId = (int)$db->lastInsertId();
+
+$stmtFetch->execute([':id' => $vaultKeyId]);
+$vaultRow = $stmtFetch->fetch();
+assertTest(!empty($vaultRow['api_key_encrypted']), "Raw gateway key safely stored with AES-256-CBC ciphertext");
+assertTest($vaultRow['api_key_encrypted'] !== $vaultKey['key'], "Stored gateway key is encrypted, never plaintext");
+$revealedRawKey = Crypto::decrypt($vaultRow['api_key_encrypted']);
+assertTest($revealedRawKey === $vaultKey['key'], "Admin key reveal accurately recovers full original gateway key ({$vaultRow['api_key_prefix']}...)");
+
+// Test Expiration Detection
+$expireTs = strtotime($vaultRow['expires_at']);
+assertTest($expireTs > time(), "Active key with future expiration (+7 days) evaluates as valid");
+
+$db->prepare("UPDATE gateway_keys SET expires_at = datetime('now', '-1 hour') WHERE id = :id")->execute([':id' => $vaultKeyId]);
+$stmtFetch->execute([':id' => $vaultKeyId]);
+$expiredRow = $stmtFetch->fetch();
+$expiredTs = strtotime($expiredRow['expires_at']);
+assertTest($expiredTs < time(), "Past expiration date evaluates as expired");
+
 // 7. Prompt Caching Injection Logic
 echo "\n[7] Testing Prompt Caching Injector Logic...\n";
 $samplePayload = [

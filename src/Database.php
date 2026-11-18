@@ -108,6 +108,7 @@ class Database
                 name VARCHAR(100) NOT NULL,
                 api_key_hash VARCHAR(64) NOT NULL UNIQUE,
                 api_key_prefix VARCHAR(30) NOT NULL,
+                api_key_encrypted TEXT NULL,
                 cap_usd DOUBLE DEFAULT 0.0,
                 spent_usd DOUBLE DEFAULT 0.0,
                 cap_tokens INTEGER DEFAULT 0,
@@ -128,6 +129,9 @@ class Database
         } catch (\Exception $e) {}
         try {
             self::$pdo->exec("ALTER TABLE gateway_keys ADD COLUMN used_tokens INTEGER DEFAULT 0;");
+        } catch (\Exception $e) {}
+        try {
+            self::$pdo->exec("ALTER TABLE gateway_keys ADD COLUMN api_key_encrypted TEXT NULL;");
         } catch (\Exception $e) {}
 
         // 4. request_logs (Telemetry & Audit)

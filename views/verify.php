@@ -78,6 +78,41 @@ function inspectGatewayKey(\PDO $db, string $keyInput): ?array {
     $remainingTok = $capTok > 0 ? max(0, $capTok - $usedTok) : null;
     $pctTok = $capTok > 0 ? min(100.0, round(($usedTok / $capTok) * 100, 1)) : 0.0;
 
+    // Determine quota mode
+    $quotaMode = 'unlimited';
+    if ($capTok > 0 && $capUsd == 0.0) {
+        $quotaMode = 'token';
+    } elseif ($capUsd > 0.0 && $capTok == 0) {
+        $quotaMode = 'usd';
+    } elseif ($capTok > 0 && $capUsd > 0.0) {
+        $quotaMode = 'dual';
+    }
+
+    // Expiration details
+    $expiresAt = $k['expires_at'] ?? null;
+    $expiresFormatted = 'Lifetime (No Expiry)';
+    $isExpired = false;
+    $expiresInHuman = null;
+    if (!empty($expiresAt)) {
+        $expireTs = strtotime($expiresAt);
+        $diffSec = $expireTs - time();
+        if ($diffSec <= 0) {
+            $isExpired = true;
+            $expiresFormatted = 'Expired (' . date('M j, Y H:i', $expireTs) . ')';
+            $expiresInHuman = 'Expired';
+        } else {
+            $days = ceil($diffSec / 86400);
+            if ($days <= 1) {
+                $hours = max(1, (int)ceil($diffSec / 3600));
+                $expiresInHuman = "{$hours}h left";
+                $expiresFormatted = "Expires in {$hours}h (" . date('M j, Y H:i', $expireTs) . ')';
+            } else {
+                $expiresInHuman = "{$days}d left";
+                $expiresFormatted = "Expires in {$days} days (" . date('M j, Y', $expireTs) . ')';
+            }
+        }
+    }
+
     // Determine current live operational status
     $status = $k['status'];
     $statusMessage = 'Active';
@@ -86,7 +121,7 @@ function inspectGatewayKey(\PDO $db, string $keyInput): ?array {
     if ($status !== 'active') {
         $statusMessage = 'Revoked';
         $statusType = 'revoked';
-    } elseif (!empty($k['expires_at']) && strtotime($k['expires_at']) < time()) {
+    } elseif ($isExpired) {
         $statusMessage = 'Expired';
         $statusType = 'expired';
     } elseif ($capTok > 0 && $usedTok >= $capTok) {
@@ -134,6 +169,13 @@ function inspectGatewayKey(\PDO $db, string $keyInput): ?array {
         'prefix'        => $k['api_key_prefix'],
         'status'        => $statusMessage,
         'status_type'   => $statusType,
+        'quota_mode'    => $quotaMode,
+        'expiration'    => [
+            'expires_at' => $expiresAt,
+            'is_expired' => $isExpired,
+            'formatted'  => $expiresFormatted,
+            'human'      => $expiresInHuman,
+        ],
         'tokens'        => [
             'cap'           => $capTok,
             'used'          => $usedTok,
@@ -237,6 +279,12 @@ if ($isJson) {
             </a>
 
             <div class="flex items-center space-x-3">
+                <a href="/docs" class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
+                    <svg class="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
+                    <span>Integration Docs</span>
+                </a>
                 <a href="/status" target="_blank" class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-live"></span>
                     <span class="hidden sm:inline">System Status</span>
@@ -295,7 +343,7 @@ if ($isJson) {
         <div class="card-clean p-6">
             <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div>
-                    <div class="flex items-center space-x-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <h2 class="text-xl font-bold text-slate-900 dark:text-white"><?= htmlspecialchars($inspectionResult['name']) ?></h2>
                         <?php
                             $badgeClass = match ($inspectionResult['status_type']) {
@@ -306,8 +354,30 @@ if ($isJson) {
                             };
                         ?>
                         <span class="badge <?= $badgeClass ?> font-semibold"><?= htmlspecialchars($inspectionResult['status']) ?></span>
+
+                        <?php if ($inspectionResult['quota_mode'] === 'token'): ?>
+                            <span class="badge badge-emerald text-[11px] font-medium">🪙 Token Quota Key</span>
+                        <?php elseif ($inspectionResult['quota_mode'] === 'usd'): ?>
+                            <span class="badge badge-emerald text-[11px] font-medium">💵 USD Spend Cap Key</span>
+                        <?php elseif ($inspectionResult['quota_mode'] === 'dual'): ?>
+                            <span class="badge badge-indigo text-[11px] font-medium">⚙️ Dual Cap Key</span>
+                        <?php else: ?>
+                            <span class="badge badge-slate text-[11px] font-medium">♾️ Unlimited Key</span>
+                        <?php endif; ?>
+
+                        <?php if ($inspectionResult['expiration']['expires_at']): ?>
+                            <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded text-[11px] font-mono <?= $inspectionResult['expiration']['is_expired'] ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' ?>">
+                                <span>⏳</span>
+                                <span><?= htmlspecialchars($inspectionResult['expiration']['formatted']) ?></span>
+                            </span>
+                        <?php else: ?>
+                            <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                <span>♾️</span>
+                                <span>Lifetime (No Expiry)</span>
+                            </span>
+                        <?php endif; ?>
                     </div>
-                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-2 font-mono">
                         Key Prefix: <span class="text-slate-800 dark:text-slate-200 font-bold"><?= htmlspecialchars($inspectionResult['prefix']) ?></span> &bull; 
                         Created: <?= htmlspecialchars(substr($inspectionResult['activity']['created_at'], 0, 10)) ?> &bull; 
                         Last Used: <?= htmlspecialchars($inspectionResult['activity']['last_used_at']) ?>
@@ -327,7 +397,7 @@ if ($isJson) {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             
             <!-- Card 1: Token Quota Limit -->
-            <div class="card-clean p-5 relative overflow-hidden">
+            <div class="card-clean p-5 relative overflow-hidden <?= $inspectionResult['quota_mode'] === 'token' ? 'ring-2 ring-emerald-500/30' : '' ?>">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center space-x-1.5">
                         <svg class="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -335,9 +405,19 @@ if ($isJson) {
                         </svg>
                         <span>Token Quota Balance</span>
                     </span>
-                    <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded <?= $inspectionResult['tokens']['is_unlimited'] ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : ($inspectionResult['tokens']['percent_used'] >= 100 ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400') ?>">
-                        <?= $inspectionResult['tokens']['is_unlimited'] ? 'Unlimited Cap' : $inspectionResult['tokens']['percent_used'] . '% Used' ?>
-                    </span>
+                    <?php if ($inspectionResult['quota_mode'] === 'usd'): ?>
+                        <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            Tracking Only (USD Capped)
+                        </span>
+                    <?php elseif ($inspectionResult['tokens']['is_unlimited']): ?>
+                        <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            Unlimited Tokens
+                        </span>
+                    <?php else: ?>
+                        <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded <?= $inspectionResult['tokens']['percent_used'] >= 100 ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' ?>">
+                            <?= $inspectionResult['tokens']['percent_used'] ?>% Used
+                        </span>
+                    <?php endif; ?>
                 </div>
 
                 <div class="mt-2 mb-3">
@@ -353,6 +433,14 @@ if ($isJson) {
                     <p class="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
                         &bull; <?= number_format($inspectionResult['tokens']['remaining']) ?> tokens remaining
                     </p>
+                    <?php elseif ($inspectionResult['quota_mode'] === 'usd'): ?>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        &bull; Key is capped by dollar spend ($<?= number_format($inspectionResult['spend_usd']['cap'], 2) ?> USD), tokens are unlimited.
+                    </p>
+                    <?php else: ?>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        &bull; Unlimited tokens allowance.
+                    </p>
                     <?php endif; ?>
                 </div>
 
@@ -367,7 +455,7 @@ if ($isJson) {
             </div>
 
             <!-- Card 2: USD Spend Cap -->
-            <div class="card-clean p-5 relative overflow-hidden">
+            <div class="card-clean p-5 relative overflow-hidden <?= $inspectionResult['quota_mode'] === 'usd' ? 'ring-2 ring-emerald-500/30' : '' ?>">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center space-x-1.5">
                         <svg class="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -375,9 +463,19 @@ if ($isJson) {
                         </svg>
                         <span>Spend Cap ($ USD)</span>
                     </span>
-                    <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded <?= $inspectionResult['spend_usd']['is_unlimited'] ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : ($inspectionResult['spend_usd']['percent_used'] >= 100 ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400') ?>">
-                        <?= $inspectionResult['spend_usd']['is_unlimited'] ? 'Unlimited Cap' : $inspectionResult['spend_usd']['percent_used'] . '% Spent' ?>
-                    </span>
+                    <?php if ($inspectionResult['quota_mode'] === 'token'): ?>
+                        <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            Tracking Only (Token Capped)
+                        </span>
+                    <?php elseif ($inspectionResult['spend_usd']['is_unlimited']): ?>
+                        <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            Unlimited Spend
+                        </span>
+                    <?php else: ?>
+                        <span class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded <?= $inspectionResult['spend_usd']['percent_used'] >= 100 ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' ?>">
+                            <?= $inspectionResult['spend_usd']['percent_used'] ?>% Spent
+                        </span>
+                    <?php endif; ?>
                 </div>
 
                 <div class="mt-2 mb-3">
@@ -392,6 +490,14 @@ if ($isJson) {
                     <?php if (!$inspectionResult['spend_usd']['is_unlimited']): ?>
                     <p class="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
                         &bull; $<?= number_format($inspectionResult['spend_usd']['remaining'], 4) ?> USD remaining
+                    </p>
+                    <?php elseif ($inspectionResult['quota_mode'] === 'token'): ?>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        &bull; Key is capped by token quota (<?= number_format($inspectionResult['tokens']['cap']) ?> tokens), USD spend is tracking only.
+                    </p>
+                    <?php else: ?>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        &bull; Unlimited USD spend allowance.
                     </p>
                     <?php endif; ?>
                 </div>

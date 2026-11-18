@@ -119,6 +119,23 @@ if ($path === '/verify' || $path === '/check' || $path === '/balance' || $path =
 }
 
 // -------------------------------------------------------------
+// 3c. Public Documentation & Tutorials (/docs, /connect, /tutorial)
+// -------------------------------------------------------------
+if ($path === '/docs' || $path === '/connect' || $path === '/tutorial') {
+    $currentRoute = 'docs';
+    $pageTitle = 'Connect & Tutorials';
+    if (Auth::check()) {
+        ob_start();
+        require __DIR__ . '/views/docs.php';
+        $content = ob_get_clean();
+        require __DIR__ . '/views/layout.php';
+    } else {
+        require __DIR__ . '/views/docs.php';
+    }
+    exit;
+}
+
+// -------------------------------------------------------------
 // 4. Authentication & Setup Routes (/setup, /login, /logout)
 // -------------------------------------------------------------
 if ($path === '/setup' || $path === '/login') {
@@ -228,16 +245,6 @@ if ($path === '/settings') {
     $pageTitle = 'Vault & Settings';
     ob_start();
     require __DIR__ . '/views/settings.php';
-    $content = ob_get_clean();
-    require __DIR__ . '/views/layout.php';
-    exit;
-}
-
-if ($path === '/docs') {
-    $currentRoute = 'docs';
-    $pageTitle = 'Connect & Tutorials';
-    ob_start();
-    require __DIR__ . '/views/docs.php';
     $content = ob_get_clean();
     require __DIR__ . '/views/layout.php';
     exit;

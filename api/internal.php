@@ -176,7 +176,8 @@ switch ($action) {
         $stmt = $db->query("
             SELECT id, name, api_key_prefix, cap_usd, spent_usd, cap_tokens, used_tokens,
                    rate_limit_rpm, allowed_models, status, expires_at, 
-                   total_requests, last_used_at, created_at
+                   total_requests, last_used_at, created_at,
+                   CASE WHEN api_key_encrypted IS NOT NULL AND api_key_encrypted != '' THEN 1 ELSE 0 END as can_reveal
             FROM gateway_keys
             ORDER BY id DESC
         ");
@@ -193,13 +194,14 @@ switch ($action) {
         $expiresAt = !empty($body['expires_at']) ? trim($body['expires_at']) : null;
 
         $newKeyData = Crypto::generateGatewayKey();
+        $encryptedKey = Crypto::encrypt($newKeyData['key']);
 
         $stmt = $db->prepare("
             INSERT INTO gateway_keys (
-                name, api_key_hash, api_key_prefix, cap_usd, spent_usd, cap_tokens, used_tokens,
+                name, api_key_hash, api_key_prefix, api_key_encrypted, cap_usd, spent_usd, cap_tokens, used_tokens,
                 rate_limit_rpm, allowed_models, status, expires_at, created_at
             ) VALUES (
-                :name, :hash, :prefix, :cap, 0.0, :cap_tok, 0,
+                :name, :hash, :prefix, :enc, :cap, 0.0, :cap_tok, 0,
                 :rpm, :models, 'active', :expires, datetime('now')
             )
         ");
@@ -207,11 +209,12 @@ switch ($action) {
             ':name'     => $name,
             ':hash'     => $newKeyData['hash'],
             ':prefix'   => $newKeyData['prefix'],
+            ':enc'      => $encryptedKey,
             ':cap'      => $capUsd,
             ':cap_tok'  => $capTokens,
             ':rpm'      => $rpm,
             ':models'   => $allowedModels,
-            ':expires'  => $expiresAt
+            ':expires'  => $expiresAt ?: null
         ]);
 
         $newId = (int)$db->lastInsertId();
@@ -230,6 +233,41 @@ switch ($action) {
                 'status'         => 'active'
             ]
         ]);
+        break;
+
+    case 'keys/reveal':
+        $id = (int)($body['id'] ?? $_GET['id'] ?? 0);
+        if ($id <= 0) {
+            jsonResponse(['error' => 'Invalid key ID.'], 400);
+        }
+
+        $stmt = $db->prepare("SELECT id, name, api_key_prefix, api_key_encrypted FROM gateway_keys WHERE id = :id LIMIT 1");
+        $stmt->execute([':id' => $id]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            jsonResponse(['error' => 'Key not found.'], 404);
+        }
+
+        if (empty($row['api_key_encrypted'])) {
+            jsonResponse([
+                'success'   => false,
+                'prefix'    => $row['api_key_prefix'],
+                'error'     => 'This key was generated before encrypted vault storage was added. Only the prefix (' . $row['api_key_prefix'] . ') is stored.'
+            ]);
+        }
+
+        try {
+            $rawKey = Crypto::decrypt($row['api_key_encrypted']);
+            jsonResponse([
+                'success'   => true,
+                'full_key'  => $rawKey,
+                'name'      => $row['name'],
+                'prefix'    => $row['api_key_prefix']
+            ]);
+        } catch (\Exception $e) {
+            jsonResponse(['error' => 'Decryption failed: ' . $e->getMessage()], 500);
+        }
         break;
 
     case 'keys/update':
