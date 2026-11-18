@@ -77,11 +77,51 @@ if (empty($rawGatewayKey)) {
     }
 }
 
-// Special check: Public or authenticated /v1/models endpoint
+$keyHash = !empty($rawGatewayKey) ? hash('sha256', $rawGatewayKey) : '';
+$gatewayKey = null;
+if (!empty($keyHash)) {
+    $stmtKey = $db->prepare("SELECT * FROM gateway_keys WHERE api_key_hash = :hash LIMIT 1");
+    $stmtKey->execute([':hash' => $keyHash]);
+    $gatewayKey = $stmtKey->fetch();
+}
+
+// Special check: /v1/models endpoint (Model Discovery for Claude Desktop, Cowork, IDEs, SDKs)
 $isModelsEndpoint = ($endpoint === '/v1/models' || str_starts_with($endpoint, '/v1/models/'));
 
 if ($isModelsEndpoint && $_SERVER['REQUEST_METHOD'] === 'GET') {
-    // Check if we can fetch live models from Anthropic upstream
+    // If a key was provided in headers, validate it
+    if (!empty($rawGatewayKey)) {
+        if (!$gatewayKey) {
+            http_response_code(401);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'type' => 'error',
+                'error' => ['type' => 'authentication_error', 'message' => 'ClaudePulse: Invalid gateway API key.']
+            ]);
+            exit;
+        }
+        if ($gatewayKey['status'] !== 'active') {
+            http_response_code(401);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'type' => 'error',
+                'error' => ['type' => 'authentication_error', 'message' => 'ClaudePulse: This gateway API key has been revoked.']
+            ]);
+            exit;
+        }
+        if (!empty($gatewayKey['expires_at']) && strtotime($gatewayKey['expires_at']) < time()) {
+            http_response_code(401);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'type' => 'error',
+                'error' => ['type' => 'authentication_error', 'message' => 'ClaudePulse: This gateway API key has expired.']
+            ]);
+            exit;
+        }
+    }
+
+    // Retrieve active models catalog
+    $modelsList = [];
     $stmtLiveUpstream = $db->query("SELECT api_key_encrypted FROM upstream_keys WHERE is_active = 1 ORDER BY priority ASC LIMIT 1");
     $liveUpstreamRow = $stmtLiveUpstream->fetch();
 
@@ -94,8 +134,8 @@ if ($isModelsEndpoint && $_SERVER['REQUEST_METHOD'] === 'GET') {
                 'anthropic-version: 2023-06-01'
             ]);
             curl_setopt($chModels, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($chModels, CURLOPT_CONNECTTIMEOUT, 5);
-            curl_setopt($chModels, CURLOPT_TIMEOUT, 8);
+            curl_setopt($chModels, CURLOPT_CONNECTTIMEOUT, 4);
+            curl_setopt($chModels, CURLOPT_TIMEOUT, 6);
             $liveResp = curl_exec($chModels);
             $liveCode = curl_getinfo($chModels, CURLINFO_HTTP_CODE);
             curl_close($chModels);
@@ -103,21 +143,62 @@ if ($isModelsEndpoint && $_SERVER['REQUEST_METHOD'] === 'GET') {
             if ($liveCode === 200 && $liveResp) {
                 $liveData = json_decode($liveResp, true);
                 if (!empty($liveData['data']) && is_array($liveData['data'])) {
-                    jsonResponse($liveData);
+                    $modelsList = $liveData['data'];
                 }
             }
-        } catch (\Exception $e) {
-            // Fall back to local catalog
+        } catch (\Exception $e) {}
+    }
+
+    if (empty($modelsList)) {
+        foreach (Pricing::getKnownModels() as $km) {
+            $modelsList[] = [
+                'type'         => 'model',
+                'id'           => $km['id'],
+                'display_name' => $km['name'] ?? $km['id'],
+                'created_at'   => $km['created_at'] ?? '2026-01-01T00:00:00Z'
+            ];
         }
     }
 
-    jsonResponse(['data' => Pricing::getKnownModels(), 'has_more' => false]);
-}
+    // Filter models if key has allowed_models whitelist
+    if (!empty($gatewayKey['allowed_models'])) {
+        $allowedList = array_filter(array_map('trim', explode(',', $gatewayKey['allowed_models'])));
+        if (!empty($allowedList)) {
+            $filtered = [];
+            foreach ($modelsList as $m) {
+                $mId = strtolower($m['id'] ?? '');
+                $mName = strtolower($m['display_name'] ?? $m['name'] ?? '');
+                foreach ($allowedList as $allowed) {
+                    $allowedLower = strtolower(trim($allowed));
+                    if (
+                        $mId === $allowedLower ||
+                        str_starts_with($mId, $allowedLower) ||
+                        str_starts_with($allowedLower, $mId) ||
+                        str_contains($mId, $allowedLower) ||
+                        str_contains($mName, $allowedLower) ||
+                        ($allowedLower === 'sonnet' && str_contains($mId, 'sonnet')) ||
+                        ($allowedLower === 'opus' && str_contains($mId, 'opus')) ||
+                        ($allowedLower === 'haiku' && str_contains($mId, 'haiku')) ||
+                        ($allowedLower === 'fable' && str_contains($mId, 'fable'))
+                    ) {
+                        $filtered[] = $m;
+                        break;
+                    }
+                }
+            }
+            $modelsList = array_values($filtered);
+        }
+    }
 
-$keyHash = hash('sha256', $rawGatewayKey);
-$stmtKey = $db->prepare("SELECT * FROM gateway_keys WHERE api_key_hash = :hash LIMIT 1");
-$stmtKey->execute([':hash' => $keyHash]);
-$gatewayKey = $stmtKey->fetch();
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'data'     => $modelsList,
+        'has_more' => false,
+        'first_id' => !empty($modelsList[0]['id']) ? $modelsList[0]['id'] : null,
+        'last_id'  => !empty($modelsList) ? end($modelsList)['id'] : null
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if (!$gatewayKey) {
     http_response_code(401);
@@ -315,6 +396,36 @@ foreach ($allHeaders as $hKey => $hVal) {
     }
 }
 
+// Recursively ensure all empty schema objects (e.g. properties: {}) stay encoded as {} rather than []
+function sanitizeSchemaObjects(&$data): void {
+    if (!is_array($data)) return;
+    if (isset($data['type']) && $data['type'] === 'object') {
+        if (isset($data['properties']) && is_array($data['properties']) && empty($data['properties'])) {
+            $data['properties'] = (object)[];
+        }
+        if (isset($data['patternProperties']) && is_array($data['patternProperties']) && empty($data['patternProperties'])) {
+            $data['patternProperties'] = (object)[];
+        }
+        if (isset($data['dependentSchemas']) && is_array($data['dependentSchemas']) && empty($data['dependentSchemas'])) {
+            $data['dependentSchemas'] = (object)[];
+        }
+    }
+    if (isset($data['properties']) && is_array($data['properties']) && empty($data['properties'])) {
+        $data['properties'] = (object)[];
+    }
+    if (isset($data['definitions']) && is_array($data['definitions']) && empty($data['definitions'])) {
+        $data['definitions'] = (object)[];
+    }
+    if (isset($data['$defs']) && is_array($data['$defs']) && empty($data['$defs'])) {
+        $data['$defs'] = (object)[];
+    }
+    foreach ($data as $k => &$v) {
+        if (is_array($v)) {
+            sanitizeSchemaObjects($v);
+        }
+    }
+}
+
 if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
     // 1. Inject cache_control on system prompt (if present)
     if (!empty($body['system'])) {
@@ -336,12 +447,15 @@ if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
         }
     }
 
-    // 2. Inject cache_control on the last tool definition (if present)
+    // 2. Inject cache_control on the last tool definition (if standard tool)
     if (!empty($body['tools']) && is_array($body['tools']) && count($body['tools']) > 0) {
         $lastToolIdx = count($body['tools']) - 1;
-        if (is_array($body['tools'][$lastToolIdx]) && !isset($body['tools'][$lastToolIdx]['cache_control'])) {
-            $body['tools'][$lastToolIdx]['cache_control'] = ['type' => 'ephemeral'];
-            $promptCachingInjected = true;
+        $lastTool = &$body['tools'][$lastToolIdx];
+        if (is_array($lastTool) && !isset($lastTool['cache_control'])) {
+            if (isset($lastTool['name']) && !isset($lastTool['type'])) {
+                $lastTool['cache_control'] = ['type' => 'ephemeral'];
+                $promptCachingInjected = true;
+            }
         }
     }
 
@@ -351,6 +465,10 @@ if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
             $existingBeta = 'prompt-caching-2024-07-31';
         } elseif (!str_contains($existingBeta, 'prompt-caching')) {
             $existingBeta .= ',prompt-caching-2024-07-31';
+        }
+        // Sanitize any empty JSON Schema object properties before re-encoding so they encode to {} instead of []
+        if (!empty($body['tools'])) {
+            sanitizeSchemaObjects($body['tools']);
         }
         $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
