@@ -220,6 +220,36 @@ $expiredRow = $stmtFetch->fetch();
 $expiredTs = strtotime($expiredRow['expires_at']);
 assertTest($expiredTs < time(), "Past expiration date evaluates as expired");
 
+// 6d. Allowed Models Whitelist Validation Logic
+echo "\n[6d] Testing Allowed Models Whitelist Matching...\n";
+function isModelAllowed(string $allowedModelsStr, string $modelRequested): bool {
+    $allowed = array_filter(array_map('trim', explode(',', $allowedModelsStr)));
+    if (empty($allowed)) return true;
+    $reqLower = strtolower(trim($modelRequested));
+    foreach ($allowed as $allowedModel) {
+        $allowedLower = strtolower(trim($allowedModel));
+        if (empty($allowedLower)) continue;
+        if (
+            $reqLower === $allowedLower ||
+            str_starts_with($reqLower, $allowedLower) ||
+            str_starts_with($allowedLower, $reqLower) ||
+            ($allowedLower === 'sonnet' && str_contains($reqLower, 'sonnet')) ||
+            ($allowedLower === 'opus' && str_contains($reqLower, 'opus')) ||
+            ($allowedLower === 'haiku' && str_contains($reqLower, 'haiku')) ||
+            ($allowedLower === 'fable' && str_contains($reqLower, 'fable'))
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+assertTest(isModelAllowed('', 'claude-sonnet-5-5'), "Empty allowed_models allows any model (All Models)");
+assertTest(isModelAllowed('claude-sonnet-5-5,claude-haiku-5-5', 'claude-sonnet-5-5'), "Whitelisted model allowed");
+assertTest(isModelAllowed('claude-3-7-sonnet', 'claude-3-7-sonnet-20250219'), "Prefix/dated model variation permitted");
+assertTest(isModelAllowed('sonnet', 'claude-sonnet-4-6'), "Family keyword whitelist allows series member");
+assertTest(!isModelAllowed('claude-haiku-5-5', 'claude-opus-5-5'), "Non-whitelisted model correctly rejected");
+
 // 7. Prompt Caching Injection Logic
 echo "\n[7] Testing Prompt Caching Injector Logic...\n";
 $samplePayload = [

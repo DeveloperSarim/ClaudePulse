@@ -1,7 +1,11 @@
 <?php
 $pageTitle = 'Gateway API Keys';
 $currentRoute = 'keys';
+$knownModels = \ClaudePulse\Pricing::getKnownModels();
 ?>
+<script>
+    window.CP_INITIAL_MODELS = <?= json_encode($knownModels, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+</script>
 
 <!-- Header -->
 <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
@@ -139,11 +143,46 @@ $currentRoute = 'keys';
                            class="form-input font-mono">
                     <p class="text-[10px] text-slate-500 mt-0.5">Max requests/min.</p>
                 </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Allowed Models (Optional)</label>
-                    <input type="text" id="create-allowed-models" name="allowed_models" placeholder="Leave empty for all models"
-                           class="form-input font-mono">
-                    <p class="text-[10px] text-slate-500 mt-0.5">Comma-separated whitelist.</p>
+                <div class="relative" id="create-models-dropdown-container">
+                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                        <span>Allowed Models</span>
+                        <span id="create-models-badge" class="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-medium">All Models</span>
+                    </label>
+
+                    <div class="relative">
+                        <button type="button" id="create-models-trigger" onclick="toggleModelsDropdown('create', event)"
+                                class="form-input flex items-center justify-between text-left cursor-pointer w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5">
+                            <span id="create-models-label" class="truncate text-slate-800 dark:text-slate-200">
+                                ✨ All Models Allowed
+                            </span>
+                            <svg class="w-4 h-4 text-slate-400 ml-1.5 flex-shrink-0 transition-transform duration-200" id="create-models-arrow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <input type="hidden" name="allowed_models" id="create-allowed-models" value="">
+
+                        <!-- Dropdown Popover Menu -->
+                        <div id="create-models-menu" class="hidden absolute right-0 sm:left-0 z-50 mt-1 w-72 sm:w-80 bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-2.5 text-xs space-y-2 max-h-72 overflow-y-auto">
+                            <!-- Search -->
+                            <div class="relative">
+                                <input type="text" placeholder="Search models..." oninput="filterModelsList('create', this.value)"
+                                       class="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono">
+                            </div>
+
+                            <!-- Presets -->
+                            <div class="flex flex-wrap gap-1 items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+                                <button type="button" onclick="applyModelPreset('create', 'all')" class="text-[10px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 font-bold hover:bg-emerald-100 transition">✨ All</button>
+                                <button type="button" onclick="applyModelPreset('create', 'sonnet')" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 transition">⚡ Sonnet</button>
+                                <button type="button" onclick="applyModelPreset('create', 'haiku')" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 transition">🚀 Haiku</button>
+                                <button type="button" onclick="applyModelPreset('create', 'fable-opus')" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 transition">🧠 Frontier</button>
+                            </div>
+
+                            <!-- Checklist -->
+                            <div id="create-models-checklist" class="space-y-1"></div>
+                        </div>
+                    </div>
+
+                    <div id="create-models-chips" class="mt-1.5 flex flex-wrap gap-1"></div>
                 </div>
             </div>
 
@@ -301,10 +340,46 @@ $currentRoute = 'keys';
                 </div>
             </div>
 
-            <div>
-                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Allowed Models (Optional)</label>
-                <input type="text" name="allowed_models" id="edit-key-models" placeholder="Leave empty for all models"
-                       class="form-input font-mono">
+            <div class="relative" id="edit-models-dropdown-container">
+                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                    <span>Allowed Models</span>
+                    <span id="edit-models-badge" class="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-medium">All Models</span>
+                </label>
+
+                <div class="relative">
+                    <button type="button" id="edit-models-trigger" onclick="toggleModelsDropdown('edit', event)"
+                            class="form-input flex items-center justify-between text-left cursor-pointer w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5">
+                        <span id="edit-models-label" class="truncate text-slate-800 dark:text-slate-200">
+                            ✨ All Models Allowed
+                        </span>
+                        <svg class="w-4 h-4 text-slate-400 ml-1.5 flex-shrink-0 transition-transform duration-200" id="edit-models-arrow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+                    <input type="hidden" name="allowed_models" id="edit-key-models" value="">
+
+                    <!-- Dropdown Popover Menu -->
+                    <div id="edit-models-menu" class="hidden absolute left-0 right-0 z-50 mt-1 bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-2.5 text-xs space-y-2 max-h-72 overflow-y-auto">
+                        <!-- Search -->
+                        <div class="relative">
+                            <input type="text" placeholder="Search models..." oninput="filterModelsList('edit', this.value)"
+                                   class="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono">
+                        </div>
+
+                        <!-- Presets -->
+                        <div class="flex flex-wrap gap-1 items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+                            <button type="button" onclick="applyModelPreset('edit', 'all')" class="text-[10px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 font-bold hover:bg-emerald-100 transition">✨ All</button>
+                            <button type="button" onclick="applyModelPreset('edit', 'sonnet')" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 transition">⚡ Sonnet</button>
+                            <button type="button" onclick="applyModelPreset('edit', 'haiku')" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 transition">🚀 Haiku</button>
+                            <button type="button" onclick="applyModelPreset('edit', 'fable-opus')" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 transition">🧠 Frontier</button>
+                        </div>
+
+                        <!-- Checklist -->
+                        <div id="edit-models-checklist" class="space-y-1"></div>
+                    </div>
+                </div>
+
+                <div id="edit-models-chips" class="mt-1.5 flex flex-wrap gap-1"></div>
             </div>
 
             <div class="pt-2 flex justify-end space-x-2">
@@ -423,9 +498,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                     <td class="py-3 px-4 font-semibold text-slate-900 dark:text-white">
                         <div class="font-bold">${k.name}</div>
-                        <span class="inline-flex items-center space-x-1 font-mono text-[11px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400 mt-1">
-                            <span>${k.api_key_prefix}••••</span>
-                        </span>
+                        <div class="flex flex-wrap items-center gap-1.5 mt-1">
+                            <span class="inline-flex items-center space-x-1 font-mono text-[11px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400">
+                                <span>${k.api_key_prefix}••••</span>
+                            </span>
+                            ${k.allowed_models ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20" title="${k.allowed_models}">🔒 ${k.allowed_models.split(',').length} models</span>` : `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-slate-400 dark:text-slate-500">✨ All models</span>`}
+                        </div>
                     </td>
                     <td class="py-3 px-4">
                         ${quotaHtml}
@@ -501,8 +579,203 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // --- DYNAMIC ALLOWED MODELS SELECTOR CONTROLLER ---
+    let activeModels = window.CP_INITIAL_MODELS || [];
+
+    async function refreshModelsCatalog() {
+        try {
+            const res = await ClaudePulse.apiRequest('/api/internal/models');
+            if (res.ok && res.data && res.data.models && res.data.models.length > 0) {
+                activeModels = res.data.models;
+                renderModelChecklists('create');
+                renderModelChecklists('edit');
+            }
+        } catch (e) {
+            console.warn('Failed to refresh models:', e);
+        }
+    }
+
+    function renderModelChecklists(formPrefix) {
+        const container = document.getElementById(`${formPrefix}-models-checklist`);
+        if (!container) return;
+
+        container.innerHTML = activeModels.map(m => {
+            const badge = m.badge || m.tier || 'Frontier';
+            return `
+                <label class="model-item flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition select-none" data-id="${m.id}" data-name="${(m.name || m.id).toLowerCase()}">
+                    <div class="flex items-center space-x-2.5">
+                        <input type="checkbox" value="${m.id}" onchange="onModelSelectionChange('${formPrefix}')" 
+                               class="model-cb rounded border-slate-300 dark:border-slate-700 text-emerald-600 focus:ring-emerald-500 cursor-pointer">
+                        <div>
+                            <div class="font-bold text-slate-800 dark:text-slate-200 text-xs">${m.name || m.id}</div>
+                            <div class="text-[10px] font-mono text-slate-400">${m.id}</div>
+                        </div>
+                    </div>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold flex-shrink-0">${badge}</span>
+                </label>
+            `;
+        }).join('');
+    }
+
+    window.toggleModelsDropdown = function(formPrefix, event) {
+        if (event) event.stopPropagation();
+        const menu = document.getElementById(`${formPrefix}-models-menu`);
+        const arrow = document.getElementById(`${formPrefix}-models-arrow`);
+        const otherPrefix = formPrefix === 'create' ? 'edit' : 'create';
+        
+        // Close other dropdown
+        const otherMenu = document.getElementById(`${otherPrefix}-models-menu`);
+        if (otherMenu) otherMenu.classList.add('hidden');
+        const otherArrow = document.getElementById(`${otherPrefix}-models-arrow`);
+        if (otherArrow) otherArrow.classList.remove('rotate-180');
+
+        if (menu) {
+            const isClosed = menu.classList.contains('hidden');
+            if (isClosed) {
+                menu.classList.remove('hidden');
+                if (arrow) arrow.classList.add('rotate-180');
+            } else {
+                menu.classList.add('hidden');
+                if (arrow) arrow.classList.remove('rotate-180');
+            }
+        }
+    };
+
+    // Close dropdowns on outside click
+    document.addEventListener('click', (e) => {
+        ['create', 'edit'].forEach(prefix => {
+            const container = document.getElementById(`${prefix}-models-dropdown-container`);
+            const menu = document.getElementById(`${prefix}-models-menu`);
+            const arrow = document.getElementById(`${prefix}-models-arrow`);
+            if (container && menu && !container.contains(e.target)) {
+                menu.classList.add('hidden');
+                if (arrow) arrow.classList.remove('rotate-180');
+            }
+        });
+    });
+
+    window.filterModelsList = function(formPrefix, query) {
+        const q = (query || '').toLowerCase().trim();
+        const container = document.getElementById(`${formPrefix}-models-checklist`);
+        if (!container) return;
+        const items = container.querySelectorAll('.model-item');
+        items.forEach(el => {
+            const id = (el.getAttribute('data-id') || '').toLowerCase();
+            const name = (el.getAttribute('data-name') || '').toLowerCase();
+            if (!q || id.includes(q) || name.includes(q)) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        });
+    };
+
+    window.onModelSelectionChange = function(formPrefix) {
+        const container = document.getElementById(`${formPrefix}-models-checklist`);
+        const hiddenInput = document.getElementById(formPrefix === 'create' ? 'create-allowed-models' : 'edit-key-models');
+        const labelSpan = document.getElementById(`${formPrefix}-models-label`);
+        const badgeSpan = document.getElementById(`${formPrefix}-models-badge`);
+        const chipsContainer = document.getElementById(`${formPrefix}-models-chips`);
+
+        if (!container || !hiddenInput) return;
+
+        const checkedBoxes = Array.from(container.querySelectorAll('input[type="checkbox"]:checked'));
+        const selectedIds = checkedBoxes.map(cb => cb.value);
+
+        hiddenInput.value = selectedIds.join(',');
+
+        if (selectedIds.length === 0) {
+            labelSpan.innerText = '✨ All Models Allowed';
+            badgeSpan.innerText = 'All Models';
+            badgeSpan.className = 'text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-medium';
+            chipsContainer.innerHTML = '';
+            chipsContainer.classList.add('hidden');
+        } else {
+            const count = selectedIds.length;
+            if (count === 1) {
+                const m = activeModels.find(x => x.id === selectedIds[0]);
+                labelSpan.innerText = m ? m.name : selectedIds[0];
+                badgeSpan.innerText = '1 Model Whitelisted';
+            } else {
+                labelSpan.innerText = `🔒 ${count} Models Whitelisted`;
+                badgeSpan.innerText = `${count} Models Whitelisted`;
+            }
+            badgeSpan.className = 'text-[10px] text-amber-600 dark:text-amber-400 font-mono font-bold';
+
+            // Render dismissible chips
+            chipsContainer.classList.remove('hidden');
+            chipsContainer.innerHTML = selectedIds.map(id => {
+                const m = activeModels.find(x => x.id === id);
+                const name = m ? m.name : id;
+                return `
+                    <span class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 text-[10px] font-mono">
+                        <span>${name}</span>
+                        <button type="button" onclick="removeModelSelection('${formPrefix}', '${id}')" class="hover:text-rose-600 dark:hover:text-rose-400 font-bold ml-1 text-xs">&times;</button>
+                    </span>
+                `;
+            }).join('');
+        }
+    };
+
+    window.removeModelSelection = function(formPrefix, modelId) {
+        const container = document.getElementById(`${formPrefix}-models-checklist`);
+        if (!container) return;
+        const cb = container.querySelector(`input[type="checkbox"][value="${modelId}"]`);
+        if (cb) {
+            cb.checked = false;
+            onModelSelectionChange(formPrefix);
+        }
+    };
+
+    window.applyModelPreset = function(formPrefix, preset) {
+        const container = document.getElementById(`${formPrefix}-models-checklist`);
+        if (!container) return;
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+
+        if (preset === 'all') {
+            checkboxes.forEach(cb => cb.checked = false);
+        } else if (preset === 'sonnet') {
+            checkboxes.forEach(cb => {
+                const val = cb.value.toLowerCase();
+                cb.checked = val.includes('sonnet');
+            });
+        } else if (preset === 'haiku') {
+            checkboxes.forEach(cb => {
+                const val = cb.value.toLowerCase();
+                cb.checked = val.includes('haiku');
+            });
+        } else if (preset === 'fable-opus') {
+            checkboxes.forEach(cb => {
+                const val = cb.value.toLowerCase();
+                cb.checked = val.includes('fable') || val.includes('opus');
+            });
+        }
+
+        onModelSelectionChange(formPrefix);
+    };
+
+    window.setModelSelectionFromValue = function(formPrefix, valueStr) {
+        const container = document.getElementById(`${formPrefix}-models-checklist`);
+        if (!container) return;
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        
+        if (!valueStr || !valueStr.trim()) {
+            checkboxes.forEach(cb => cb.checked = false);
+            onModelSelectionChange(formPrefix);
+            return;
+        }
+
+        const targetIds = valueStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        checkboxes.forEach(cb => {
+            const val = cb.value.toLowerCase();
+            cb.checked = targetIds.includes(val) || targetIds.some(t => val.includes(t) || t.includes(val));
+        });
+        onModelSelectionChange(formPrefix);
+    };
+
     window.openCreateModal = function() {
         switchQuotaMode('create', 'tokens');
+        applyModelPreset('create', 'all');
         ClaudePulse.openModal('modal-create-key');
     };
 
@@ -560,6 +833,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (res.ok && res.data && res.data.success) {
                 ClaudePulse.closeModal('modal-create-key');
                 createForm.reset();
+                applyModelPreset('create', 'all');
                 loadKeys();
 
                 const keyObj = res.data.key;
@@ -594,7 +868,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('edit-key-cap').value = key.cap_usd || 0;
         document.getElementById('edit-key-cap-tokens').value = key.cap_tokens || 0;
         document.getElementById('edit-key-rpm').value = key.rate_limit_rpm;
-        document.getElementById('edit-key-models').value = key.allowed_models || '';
+        setModelSelectionFromValue('edit', key.allowed_models || '');
         document.getElementById('edit-key-status').value = key.status;
 
         // Auto-detect mode
@@ -702,6 +976,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // Initialize model checklists & load keys
+    renderModelChecklists('create');
+    renderModelChecklists('edit');
+    applyModelPreset('create', 'all');
+    refreshModelsCatalog();
     loadKeys();
 });
 </script>

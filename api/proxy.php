@@ -256,17 +256,37 @@ $modelRequested = $body['model'] ?? null;
 // Check allowed models restriction
 if (!empty($gatewayKey['allowed_models']) && !empty($modelRequested)) {
     $allowed = array_filter(array_map('trim', explode(',', $gatewayKey['allowed_models'])));
-    if (!empty($allowed) && !in_array($modelRequested, $allowed, true)) {
-        http_response_code(400);
-        header('Content-Type: application/json; charset=utf-8');
-        echo json_encode([
-            'type' => 'error',
-            'error' => [
-                'type' => 'invalid_request_error',
-                'message' => "ClaudePulse: Model '{$modelRequested}' is not permitted for this gateway key."
-            ]
-        ]);
-        exit;
+    if (!empty($allowed)) {
+        $modelMatched = false;
+        $reqLower = strtolower(trim((string)$modelRequested));
+        foreach ($allowed as $allowedModel) {
+            $allowedLower = strtolower(trim((string)$allowedModel));
+            if (empty($allowedLower)) continue;
+            if (
+                $reqLower === $allowedLower ||
+                str_starts_with($reqLower, $allowedLower) ||
+                str_starts_with($allowedLower, $reqLower) ||
+                ($allowedLower === 'sonnet' && str_contains($reqLower, 'sonnet')) ||
+                ($allowedLower === 'opus' && str_contains($reqLower, 'opus')) ||
+                ($allowedLower === 'haiku' && str_contains($reqLower, 'haiku')) ||
+                ($allowedLower === 'fable' && str_contains($reqLower, 'fable'))
+            ) {
+                $modelMatched = true;
+                break;
+            }
+        }
+        if (!$modelMatched) {
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'type' => 'error',
+                'error' => [
+                    'type' => 'invalid_request_error',
+                    'message' => "ClaudePulse: Model '{$modelRequested}' is not permitted for this gateway key."
+                ]
+            ]);
+            exit;
+        }
     }
 }
 
