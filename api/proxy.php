@@ -396,34 +396,98 @@ foreach ($allHeaders as $hKey => $hVal) {
     }
 }
 
-// Recursively ensure all empty schema objects (e.g. properties: {}) stay encoded as {} rather than []
-function sanitizeSchemaObjects(&$data): void {
-    if (!is_array($data)) return;
-    if (isset($data['type']) && $data['type'] === 'object') {
-        if (isset($data['properties']) && is_array($data['properties']) && empty($data['properties'])) {
-            $data['properties'] = (object)[];
+// JSON Schema Draft 2020-12 Auto-Repair Engine for Tool Definitions
+function autoRepairSchema(&$schema): void {
+    if (!is_array($schema) && !is_object($schema)) {
+        $schema = [
+            'type' => 'object',
+            'properties' => (object)[]
+        ];
+        return;
+    }
+
+    if (is_object($schema)) {
+        $schema = (array)$schema;
+    }
+
+    // 1. Root must be type "object" for Anthropic Messages API
+    if (empty($schema['type']) || $schema['type'] !== 'object') {
+        $schema['type'] = 'object';
+    }
+
+    // 2. Root must have a "properties" object
+    if (!isset($schema['properties']) || !is_array($schema['properties']) || empty($schema['properties'])) {
+        $schema['properties'] = (object)[];
+    } else {
+        // Sanitize each property definition
+        foreach ($schema['properties'] as $propKey => &$propVal) {
+            if (is_array($propVal)) {
+                // OpenAI style nullable -> draft 2020-12 array type
+                if (isset($propVal['nullable'])) {
+                    $isNullable = (bool)$propVal['nullable'];
+                    unset($propVal['nullable']);
+                    if ($isNullable && isset($propVal['type']) && is_string($propVal['type']) && $propVal['type'] !== 'null') {
+                        $propVal['type'] = [$propVal['type'], 'null'];
+                    }
+                }
+                autoRepairNestedSchemaNodes($propVal);
+            }
         }
-        if (isset($data['patternProperties']) && is_array($data['patternProperties']) && empty($data['patternProperties'])) {
-            $data['patternProperties'] = (object)[];
-        }
-        if (isset($data['dependentSchemas']) && is_array($data['dependentSchemas']) && empty($data['dependentSchemas'])) {
-            $data['dependentSchemas'] = (object)[];
-        }
     }
-    if (isset($data['properties']) && is_array($data['properties']) && empty($data['properties'])) {
-        $data['properties'] = (object)[];
-    }
-    if (isset($data['definitions']) && is_array($data['definitions']) && empty($data['definitions'])) {
-        $data['definitions'] = (object)[];
-    }
-    if (isset($data['$defs']) && is_array($data['$defs']) && empty($data['$defs'])) {
-        $data['$defs'] = (object)[];
-    }
-    foreach ($data as $k => &$v) {
-        if (is_array($v)) {
-            sanitizeSchemaObjects($v);
+
+    // 3. Remove draft-incompatible top-level keys if any
+    unset($schema['$schema']);
+}
+
+function autoRepairNestedSchemaNodes(&$node): void {
+    if (!is_array($node)) return;
+
+    if (isset($node['type']) && $node['type'] === 'object') {
+        if (!isset($node['properties']) || (is_array($node['properties']) && empty($node['properties']))) {
+            $node['properties'] = (object)[];
         }
     }
+    if (isset($node['properties']) && is_array($node['properties']) && empty($node['properties'])) {
+        $node['properties'] = (object)[];
+    }
+    if (isset($node['patternProperties']) && is_array($node['patternProperties']) && empty($node['patternProperties'])) {
+        $node['patternProperties'] = (object)[];
+    }
+    if (isset($node['definitions']) && is_array($node['definitions']) && empty($node['definitions'])) {
+        $node['definitions'] = (object)[];
+    }
+    if (isset($node['$defs']) && is_array($node['$defs']) && empty($node['$defs'])) {
+        $node['$defs'] = (object)[];
+    }
+
+    foreach ($node as &$child) {
+        if (is_array($child)) {
+            autoRepairNestedSchemaNodes($child);
+        }
+    }
+}
+
+function autoRepairToolsList(&$tools): void {
+    if (!is_array($tools)) return;
+    foreach ($tools as &$tool) {
+        if (!is_array($tool)) continue;
+        if (isset($tool['input_schema'])) {
+            autoRepairSchema($tool['input_schema']);
+        }
+        if (isset($tool['custom']) && is_array($tool['custom'])) {
+            if (isset($tool['custom']['input_schema'])) {
+                autoRepairSchema($tool['custom']['input_schema']);
+            }
+        }
+    }
+}
+
+$needsReencode = false;
+
+// Auto-repair tools schemas on all /v1/messages requests to guarantee JSON Schema Draft 2020-12 compliance
+if ($endpoint === '/v1/messages' && !empty($body['tools']) && is_array($body['tools'])) {
+    autoRepairToolsList($body['tools']);
+    $needsReencode = true;
 }
 
 if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
@@ -466,12 +530,15 @@ if ($autoPromptCaching && $endpoint === '/v1/messages' && !empty($body)) {
         } elseif (!str_contains($existingBeta, 'prompt-caching')) {
             $existingBeta .= ',prompt-caching-2024-07-31';
         }
-        // Sanitize any empty JSON Schema object properties before re-encoding so they encode to {} instead of []
-        if (!empty($body['tools'])) {
-            sanitizeSchemaObjects($body['tools']);
-        }
-        $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $needsReencode = true;
     }
+}
+
+if ($needsReencode) {
+    if (!empty($body['tools']) && is_array($body['tools'])) {
+        autoRepairToolsList($body['tools']);
+    }
+    $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
 $isStreaming = !empty($body['stream']) || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'text/event-stream'));

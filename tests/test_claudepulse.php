@@ -290,6 +290,59 @@ $samplePayload['tools'][$lastToolIdx]['cache_control'] = ['type' => 'ephemeral']
 assertTest($samplePayload['tools'][$lastToolIdx]['cache_control']['type'] === 'ephemeral', "Prompt Caching injected into last tool block");
 assertTest(!isset($samplePayload['tools'][0]['cache_control']), "Earlier tool definitions left unchanged");
 
+// 8. Tool Schema Auto-Repair for Draft 2020-12
+echo "\n[8] Testing Tool Schema Auto-Repair (Draft 2020-12 Compliance)...\n";
+
+function autoRepairSchemaTest(&$schema): void {
+    if (!is_array($schema) && !is_object($schema)) {
+        $schema = ['type' => 'object', 'properties' => (object)[]];
+        return;
+    }
+    if (is_object($schema)) $schema = (array)$schema;
+    if (empty($schema['type']) || $schema['type'] !== 'object') {
+        $schema['type'] = 'object';
+    }
+    if (!isset($schema['properties']) || !is_array($schema['properties']) || empty($schema['properties'])) {
+        $schema['properties'] = (object)[];
+    } else {
+        foreach ($schema['properties'] as $propKey => &$propVal) {
+            if (is_array($propVal)) {
+                if (isset($propVal['nullable'])) {
+                    $isNullable = (bool)$propVal['nullable'];
+                    unset($propVal['nullable']);
+                    if ($isNullable && isset($propVal['type']) && is_string($propVal['type']) && $propVal['type'] !== 'null') {
+                        $propVal['type'] = [$propVal['type'], 'null'];
+                    }
+                }
+            }
+        }
+    }
+}
+
+function autoRepairToolsListTest(&$tools): void {
+    if (!is_array($tools)) return;
+    foreach ($tools as &$tool) {
+        if (!is_array($tool)) continue;
+        if (isset($tool['input_schema'])) autoRepairSchemaTest($tool['input_schema']);
+        if (isset($tool['custom']) && is_array($tool['custom']) && isset($tool['custom']['input_schema'])) {
+            autoRepairSchemaTest($tool['custom']['input_schema']);
+        }
+    }
+}
+
+$problematicTools = [
+    ['name' => 'no_props_tool', 'input_schema' => []],
+    ['type' => 'custom', 'custom' => ['name' => 'custom_tool_7', 'input_schema' => ['properties' => []]]],
+    ['name' => 'nullable_tool', 'input_schema' => ['type' => 'object', 'properties' => ['query' => ['type' => 'string', 'nullable' => true]]]]
+];
+
+autoRepairToolsListTest($problematicTools);
+$jsonOutput = json_encode($problematicTools);
+assertTest(str_contains($jsonOutput, '"properties":{}'), "Empty properties encoded strictly as JSON object ({})");
+assertTest(!str_contains($jsonOutput, '"properties":[]'), "Empty properties NEVER encoded as array ([])");
+assertTest(str_contains($jsonOutput, '"type":["string","null"]'), "Nullable keyword auto-converted to Draft 2020-12 union type");
+assertTest(str_contains($jsonOutput, '"type":"object"'), "Root object type enforced across all tool definitions");
+
 // Clean up isolated test database
 @unlink($testDbPath);
 
