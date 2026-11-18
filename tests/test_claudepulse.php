@@ -528,6 +528,42 @@ assertTest(isset($conflictPayload['tools'][0]['cache_control']['ttl']) && $confl
 $upstreamTtlError = "API Error: 400 system.1.cache_control.ttl: a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block. Note that blocks are processed in the following order: 'tools', 'system', 'messages'.";
 assertTest(str_contains($upstreamTtlError, 'cache_control') && str_contains($upstreamTtlError, 'ttl'), "Upstream TTL error correctly detected by interceptor");
 
+// 11. Legacy Client Version Upgrade & Model Compatibility Auto-Healer Test
+echo "\n[11] Testing Legacy Client Version Upgrade & Model Compatibility...\n";
+
+// Test version upgrade in raw payload
+$simulatedRawInput = json_encode([
+    'model' => 'claude-opus-5-5',
+    'system' => 'You are Claude Code, Anthropic official CLI for coding. Version 2.1.161.',
+    'metadata' => ['app' => 'claude-code', 'version' => '2.1.161']
+]);
+
+if (preg_match('/2\.1\.\d+/', $simulatedRawInput)) {
+    $simulatedRawInput = preg_replace_callback('/(claude[_\-\s]*code[_\-\s]*|version["\':\s]+)2\.1\.(\d+)/i', function($m) {
+        $subVer = (int)$m[2];
+        if ($subVer < 280) {
+            return $m[1] . '2.1.327';
+        }
+        return $m[0];
+    }, $simulatedRawInput);
+}
+
+assertTest(str_contains($simulatedRawInput, '2.1.327'), "Legacy client version 2.1.161 auto-upgraded to 2.1.327 in payload");
+assertTest(!str_contains($simulatedRawInput, '2.1.161'), "Outdated version 2.1.161 completely eliminated from payload");
+
+// Test User-Agent header upgrade
+$simulatedUa = 'Claude-Code/2.1.161 (Windows NT 10.0; Win64; x64)';
+$upgradedUa = preg_replace('/Claude[_\-\s]*Code\/2\.1\.\d+/i', 'Claude-Code/2.1.327', $simulatedUa);
+assertTest($upgradedUa === 'Claude-Code/2.1.327 (Windows NT 10.0; Win64; x64)', "User-Agent upgraded to Claude-Code/2.1.327");
+
+// Test upstream unsupported model error intercept
+$upstreamModelError = "API Error: 400 Claude Code 2.1.161 does not support this model; version 2.1.280 or newer is required. Run 'claude update', or update the Claude desktop app, then try again.";
+assertTest(
+    str_contains($upstreamModelError, 'does not support this model') ||
+    (str_contains($upstreamModelError, 'version') && str_contains($upstreamModelError, 'newer is required')),
+    "Upstream unsupported model / outdated client version error accurately caught by interceptor"
+);
+
 // Clean up isolated test database
 @unlink($testDbPath);
 

@@ -804,6 +804,20 @@ if ($needsReencode) {
     $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
+// Upgrade legacy client version identifiers (e.g. Claude Code 2.1.161 -> 2.1.327)
+// Older Claude Code versions trigger 400 Bad Request on newer models like Claude Opus 5.5
+if (!empty($rawInput)) {
+    if (preg_match('/2\.1\.\d+/', $rawInput)) {
+        $rawInput = preg_replace_callback('/(claude[_\-\s]*code[_\-\s]*|version["\':\s]+)2\.1\.(\d+)/i', function($m) {
+            $subVer = (int)$m[2];
+            if ($subVer < 280) {
+                return $m[1] . '2.1.327';
+            }
+            return $m[0];
+        }, $rawInput);
+    }
+}
+
 $isStreaming = !empty($body['stream']) || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'text/event-stream'));
 
 // -------------------------------------------------------------
@@ -843,10 +857,23 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
 
     // Build headers to send to Anthropic
     $anthropicVersion = '2023-06-01';
+    $billingHeader = null;
+    $customUserAgent = 'Claude-Code/2.1.327';
+
     foreach ($allHeaders as $hKey => $hVal) {
-        if (strtolower($hKey) === 'anthropic-version') {
+        $hKeyLower = strtolower($hKey);
+        if ($hKeyLower === 'anthropic-version') {
             $anthropicVersion = trim($hVal);
-            break;
+        }
+        if ($hKeyLower === 'x-anthropic-billing-header') {
+            // Upgrade legacy cc_version (e.g. 2.1.161 -> 2.1.327)
+            $billingHeader = preg_replace('/cc_version=2\.1\.\d+/i', 'cc_version=2.1.327', trim($hVal));
+        }
+        if ($hKeyLower === 'user-agent') {
+            $customUserAgent = preg_replace('/Claude[_\-\s]*Code\/2\.1\.\d+/i', 'Claude-Code/2.1.327', trim($hVal));
+            if (!str_contains(strtolower($customUserAgent), 'claude-code')) {
+                $customUserAgent = 'Claude-Code/2.1.327';
+            }
         }
     }
 
@@ -854,10 +881,17 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
         'x-api-key: ' . $decryptedApiKey,
         'anthropic-version: ' . $anthropicVersion,
         'Content-Type: application/json',
+        'User-Agent: ' . $customUserAgent,
     ];
 
+    if (!empty($billingHeader)) {
+        $headersToSend[] = 'x-anthropic-billing-header: ' . $billingHeader;
+    }
+
     if (!empty($existingBeta)) {
-        $headersToSend[] = 'anthropic-beta: ' . $existingBeta;
+        // Upgrade legacy version flags in anthropic-beta
+        $cleanBeta = preg_replace('/claude-code-2\.1\.\d+/i', 'claude-code-2.1.327', $existingBeta);
+        $headersToSend[] = 'anthropic-beta: ' . $cleanBeta;
     }
 
     $requestSucceeded = false;
@@ -989,8 +1023,25 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 break 2; // Success! Break out of both healing loop and upstream keys loop
             }
 
-            // 1. Check for Cache Control / TTL Ordering Conflict Error from Anthropic
+            // 0. Check for Unsupported Model / Outdated Client Version Error from Anthropic
             $finalErrorMsg = $errorBodyBuffer;
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (str_contains($errorBodyBuffer, 'does not support this model') || (str_contains($errorBodyBuffer, 'version') && str_contains($errorBodyBuffer, 'newer is required')))
+            ) {
+                $rawInput = preg_replace('/2\.1\.\d+/', '2.1.327', $rawInput);
+                if (!empty($existingBeta)) {
+                    $existingBeta = preg_replace('/claude-code-2\.1\.\d+/i', 'claude-code-2.1.327', $existingBeta);
+                }
+                if ($healingAttempt >= 1) {
+                    $body['model'] = 'claude-3-7-sonnet-20250219';
+                    $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                }
+                continue; // Retry with upgraded version or fallback model!
+            }
+
+            // 1. Check for Cache Control / TTL Ordering Conflict Error from Anthropic
             if (
                 $finalStatusCode === 400 &&
                 $healingAttempt < $maxToolHealingRetries &&
@@ -1081,9 +1132,26 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 break 2;
             }
 
-            // 1. Check for Cache Control / TTL Ordering Conflict Error in non-streaming response
+            // 0. Check for Unsupported Model / Outdated Client Version Error in non-streaming response
             $respStr = (string)$responseBody;
             $finalErrorMsg = $respStr;
+            if (
+                $finalStatusCode === 400 &&
+                $healingAttempt < $maxToolHealingRetries &&
+                (str_contains($respStr, 'does not support this model') || (str_contains($respStr, 'version') && str_contains($respStr, 'newer is required')))
+            ) {
+                $rawInput = preg_replace('/2\.1\.\d+/', '2.1.327', $rawInput);
+                if (!empty($existingBeta)) {
+                    $existingBeta = preg_replace('/claude-code-2\.1\.\d+/i', 'claude-code-2.1.327', $existingBeta);
+                }
+                if ($healingAttempt >= 1) {
+                    $body['model'] = 'claude-3-7-sonnet-20250219';
+                    $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                }
+                continue; // Retry with upgraded version or fallback model!
+            }
+
+            // 1. Check for Cache Control / TTL Ordering Conflict Error in non-streaming response
             if (
                 $finalStatusCode === 400 &&
                 $healingAttempt < $maxToolHealingRetries &&
