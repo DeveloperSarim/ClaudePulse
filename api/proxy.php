@@ -420,7 +420,27 @@ if (!empty($body['system'])) {
         unset($sysBlock);
     }
 }
+
+// Convert body 'betas' array (used by some SDKs) to header and strip from body to prevent 'betas: Extra inputs are not permitted'
+if (!empty($body['betas']) && is_array($body['betas'])) {
+    $bodyBetaStrs = [];
+    foreach ($body['betas'] as $bFlag) {
+        if (is_string($bFlag) && !empty(trim($bFlag))) {
+            $bodyBetaStrs[] = trim($bFlag);
+        }
+    }
+    unset($body['betas']);
+    if (!empty($bodyBetaStrs)) {
+        $existingBeta = !empty($existingBeta) ? ($existingBeta . ',' . implode(',', $bodyBetaStrs)) : implode(',', $bodyBetaStrs);
+    }
+}
+
 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+$rawInput = str_replace(
+    "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+    "You are a Claude agent, built on Anthropic's Claude Agent SDK",
+    $rawInput
+);
 
 // Client Tagging (Auto-detect Claude Code CLI / IDE)
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -1121,6 +1141,11 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 }, $headersToSend);
                 $body['model'] = 'claude-sonnet-5-5';
                 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $rawInput = str_replace(
+                    "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+                    "You are a Claude agent, built on Anthropic's Claude Agent SDK",
+                    $rawInput
+                );
                 continue; // Retry with promotional-credit-compatible flagship model!
             }
 
@@ -1277,6 +1302,11 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 }, $headersToSend);
                 $body['model'] = 'claude-sonnet-5-5';
                 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $rawInput = str_replace(
+                    "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+                    "You are a Claude agent, built on Anthropic's Claude Agent SDK",
+                    $rawInput
+                );
                 continue; // Retry with promotional-credit-compatible model!
             }
 
