@@ -264,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && in_array
             if (file_exists($dbPath)) {
                 require_once $dbPath;
                 if (class_exists('ClaudePulse\\Database')) {
-                    \ClaudePulse\Database::runMigrations();
+                    \ClaudePulse\Database::getConnection();
                     $log[] = '✓ Executed database auto-migrations & schema checks';
                 }
             }

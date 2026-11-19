@@ -64,6 +64,14 @@ class Database
     }
 
     /**
+     * Public alias to trigger database auto-migrations
+     */
+    public static function runMigrations(): void
+    {
+        self::getConnection();
+    }
+
+    /**
      * Execute auto-schema migration on startup
      */
     private static function runAutoMigrations(): void
