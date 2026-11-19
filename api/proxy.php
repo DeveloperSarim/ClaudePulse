@@ -1224,6 +1224,16 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
 
             // Terminal error: deliver buffered error to client
             if (!$headersSent) {
+                @file_put_contents(dirname(__DIR__) . '/database/last_400_error.json', json_encode([
+                    'time' => date('c'),
+                    'attempt' => $healingAttempt,
+                    'status' => $finalStatusCode,
+                    'error_body' => $errorBodyBuffer,
+                    'client_headers' => $allHeaders,
+                    'upstream_headers_sent' => $headersToSend,
+                    'body_sent' => json_decode($rawInput, true)
+                ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
                 http_response_code($finalStatusCode > 0 ? $finalStatusCode : 400);
                 header('Content-Type: application/json; charset=utf-8');
                 header('Access-Control-Allow-Origin: *');

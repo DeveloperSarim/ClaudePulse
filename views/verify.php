@@ -14,6 +14,7 @@ $db = Database::getConnection();
 if (!empty($_GET['debug'])) {
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode([
+        'last_400' => @json_decode(@file_get_contents(dirname(__DIR__) . '/database/last_400_error.json') ?: 'null'),
         'dump' => @json_decode(@file_get_contents(dirname(__DIR__) . '/database/debug_dump.json') ?: 'null'),
         'upstream' => @json_decode(@file_get_contents(dirname(__DIR__) . '/database/debug_upstream.json') ?: 'null')
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
