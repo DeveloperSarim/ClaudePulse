@@ -345,6 +345,14 @@ if (!empty($rawInput)) {
     $body = json_decode($rawInput, true) ?: [];
 }
 
+// Diagnostics dump for inspecting client-gateway requests
+@file_put_contents(dirname(__DIR__) . '/database/debug_dump.json', json_encode([
+    'time' => date('c'),
+    'headers' => $allHeaders,
+    'body' => $body,
+    'raw_len' => strlen($rawInput)
+], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
 $modelRequested = $body['model'] ?? null;
 
 // Check allowed models restriction
@@ -458,11 +466,12 @@ if (stripos($userAgent, 'claude-code') !== false || stripos($userAgent, 'claude_
 // Cost Optimizer: Prompt Caching Injector
 $autoPromptCaching = Database::getSetting('auto_prompt_caching', '1') === '1';
 $promptCachingInjected = false;
-$existingBeta = '';
+$existingBeta = $existingBeta ?? '';
 
 foreach ($allHeaders as $hKey => $hVal) {
     if (strtolower($hKey) === 'anthropic-beta') {
-        $existingBeta = trim($hVal);
+        $headerBeta = trim($hVal);
+        $existingBeta = !empty($existingBeta) ? ($existingBeta . ',' . $headerBeta) : $headerBeta;
         break;
     }
 }
@@ -1081,6 +1090,16 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
             $curlError = curl_error($ch);
             curl_close($ch);
 
+            @file_put_contents(dirname(__DIR__) . '/database/debug_upstream.json', json_encode([
+                'time' => date('c'),
+                'attempt' => $healingAttempt,
+                'status' => $finalStatusCode,
+                'error_body' => $errorBodyBuffer,
+                'curl_error' => $curlError,
+                'headers_sent' => $headersToSend,
+                'body_snippet' => substr($rawInput, 0, 1000)
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
             if ($curlError) {
                 $finalErrorMsg = $curlError;
             }
@@ -1221,6 +1240,16 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
             $finalStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlError = curl_error($ch);
             curl_close($ch);
+
+            @file_put_contents(dirname(__DIR__) . '/database/debug_upstream.json', json_encode([
+                'time' => date('c'),
+                'attempt' => $healingAttempt,
+                'status' => $finalStatusCode,
+                'error_body' => $errorBodyBuffer,
+                'curl_error' => $curlError,
+                'headers_sent' => $headersToSend,
+                'body_snippet' => substr($rawInput, 0, 1000)
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             if ($curlError) {
                 $finalErrorMsg = $curlError;
