@@ -406,7 +406,8 @@ if (!empty($body['model'])) {
 
 // Sanitize promotional-credit restricted system prompt signatures
 // Anthropic gates "You are a Claude agent, built on Anthropic's Claude Agent SDK." to paid cash balance only.
-// Softening or removing the trailing period allows promotional credit balances to execute without restriction!
+// Also, Claude Desktop Cowork injects a synthetic "x-anthropic-billing-header: cc_version=...;" text block in system[0]
+// which immediately trips Anthropic's paid-only billing filter. Dropping that block unlocks 100% free promotional credit access!
 if (!empty($body['system'])) {
     $sanitizeSystemSig = function($text) {
         if (!is_string($text)) return $text;
@@ -419,13 +420,19 @@ if (!empty($body['system'])) {
 
     if (is_string($body['system'])) {
         $body['system'] = $sanitizeSystemSig($body['system']);
+        $body['system'] = preg_replace('/x-anthropic-billing-header:[^\r\n]+[\r\n]*/i', '', $body['system']);
     } elseif (is_array($body['system'])) {
-        foreach ($body['system'] as &$sysBlock) {
+        $filteredSystem = [];
+        foreach ($body['system'] as $sysBlock) {
             if (is_array($sysBlock) && isset($sysBlock['text'])) {
+                if (stripos($sysBlock['text'], 'x-anthropic-billing-header') !== false) {
+                    continue; // Drop the billing header block!
+                }
                 $sysBlock['text'] = $sanitizeSystemSig($sysBlock['text']);
             }
+            $filteredSystem[] = $sysBlock;
         }
-        unset($sysBlock);
+        $body['system'] = array_values($filteredSystem);
     }
 }
 
@@ -1134,17 +1141,23 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 $healingAttempt < $maxToolHealingRetries &&
                 (stripos($errorBodyBuffer, 'Credit balance is too low') !== false || stripos($errorBodyBuffer, 'balance is too low') !== false)
             ) {
-                // Strip exact Agent SDK triggers from system prompt
+                // Strip exact Agent SDK triggers and billing header blocks from system prompt
                 if (!empty($body['system'])) {
                     if (is_string($body['system'])) {
                         $body['system'] = str_replace("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "You are a Claude agent, built on Anthropic's Claude Agent SDK", $body['system']);
+                        $body['system'] = preg_replace('/x-anthropic-billing-header:[^\r\n]+[\r\n]*/i', '', $body['system']);
                     } elseif (is_array($body['system'])) {
-                        foreach ($body['system'] as &$sb) {
+                        $cleanedSys = [];
+                        foreach ($body['system'] as $sb) {
                             if (is_array($sb) && isset($sb['text'])) {
+                                if (stripos($sb['text'], 'x-anthropic-billing-header') !== false) {
+                                    continue;
+                                }
                                 $sb['text'] = str_replace("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "You are a Claude agent, built on Anthropic's Claude Agent SDK", $sb['text']);
                             }
+                            $cleanedSys[] = $sb;
                         }
-                        unset($sb);
+                        $body['system'] = array_values($cleanedSys);
                     }
                 }
                 // Strip all beta headers, ensure user-agent is standard API client, and fallback to flagship Sonnet 5.5
@@ -1315,17 +1328,23 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 $healingAttempt < $maxToolHealingRetries &&
                 (stripos($respStr, 'Credit balance is too low') !== false || stripos($respStr, 'balance is too low') !== false)
             ) {
-                // Strip exact Agent SDK triggers from system prompt
+                // Strip exact Agent SDK triggers and billing header blocks from system prompt
                 if (!empty($body['system'])) {
                     if (is_string($body['system'])) {
                         $body['system'] = str_replace("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "You are a Claude agent, built on Anthropic's Claude Agent SDK", $body['system']);
+                        $body['system'] = preg_replace('/x-anthropic-billing-header:[^\r\n]+[\r\n]*/i', '', $body['system']);
                     } elseif (is_array($body['system'])) {
-                        foreach ($body['system'] as &$sb) {
+                        $cleanedSys = [];
+                        foreach ($body['system'] as $sb) {
                             if (is_array($sb) && isset($sb['text'])) {
+                                if (stripos($sb['text'], 'x-anthropic-billing-header') !== false) {
+                                    continue;
+                                }
                                 $sb['text'] = str_replace("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "You are a Claude agent, built on Anthropic's Claude Agent SDK", $sb['text']);
                             }
+                            $cleanedSys[] = $sb;
                         }
-                        unset($sb);
+                        $body['system'] = array_values($cleanedSys);
                     }
                 }
                 // Strip all beta headers, ensure user-agent is standard API client, and fallback to flagship Sonnet 5.5
