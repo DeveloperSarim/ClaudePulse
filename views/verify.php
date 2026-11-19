@@ -150,7 +150,7 @@ function inspectGatewayKey(\PDO $db, string $keyInput): ?array {
     $stmtLogs = $db->prepare("
         SELECT id, endpoint, model, status_code, is_streaming,
                input_tokens, output_tokens, cache_read_input_tokens,
-               cost_usd, latency_ms, created_at
+               cost_usd, latency_ms, error_message, created_at
         FROM request_logs
         WHERE gateway_key_id = :gid
         ORDER BY id DESC

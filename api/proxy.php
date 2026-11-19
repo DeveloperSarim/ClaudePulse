@@ -883,24 +883,15 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
 
     // Build headers to send to Anthropic
     $anthropicVersion = '2023-06-01';
-    $billingHeader = null;
-    $customUserAgent = 'Claude-Code/2.1.327';
+    $customUserAgent = 'ClaudePulse-Gateway/1.2.0 (Anthropic-API-Client)';
 
     foreach ($allHeaders as $hKey => $hVal) {
         $hKeyLower = strtolower($hKey);
         if ($hKeyLower === 'anthropic-version') {
             $anthropicVersion = trim($hVal);
         }
-        if ($hKeyLower === 'x-anthropic-billing-header') {
-            // Upgrade legacy cc_version (e.g. 2.1.161 -> 2.1.327)
-            $billingHeader = preg_replace('/cc_version=2\.1\.\d+/i', 'cc_version=2.1.327', trim($hVal));
-        }
-        if ($hKeyLower === 'user-agent') {
-            $customUserAgent = preg_replace('/Claude[_\-\s]*Code\/2\.1\.\d+/i', 'Claude-Code/2.1.327', trim($hVal));
-            if (!str_contains(strtolower($customUserAgent), 'claude-code')) {
-                $customUserAgent = 'Claude-Code/2.1.327';
-            }
-        }
+        // NOTE: We intentionally DO NOT forward x-anthropic-billing-header to Anthropic.
+        // That header explicitly gates requests to prepaid purchased balances and blocks promotional credits.
     }
 
     $headersToSend = [
@@ -910,17 +901,13 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
         'User-Agent: ' . $customUserAgent,
     ];
 
-    if (!empty($billingHeader)) {
-        $headersToSend[] = 'x-anthropic-billing-header: ' . $billingHeader;
-    }
-
     if (!empty($existingBeta)) {
-        // Strip claude-code beta flags because promotional credit accounts are restricted from claude-code beta
+        // Strip claude-code and ccr beta flags because promotional credit accounts are restricted from claude-code beta
         // but have full access to Agent SDK, API, prompt caching, computer use, and tools!
         $betaFlags = array_filter(array_map('trim', explode(',', $existingBeta)));
         $sanitizedFlags = [];
         foreach ($betaFlags as $flag) {
-            if (stripos($flag, 'claude-code') !== false) {
+            if (stripos($flag, 'claude-code') !== false || stripos($flag, 'ccr') !== false) {
                 continue; // Strip to enable promotional credits compatibility!
             }
             $sanitizedFlags[] = $flag;
@@ -1083,10 +1070,17 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 $healingAttempt < $maxToolHealingRetries &&
                 (stripos($errorBodyBuffer, 'Credit balance is too low') !== false || stripos($errorBodyBuffer, 'balance is too low') !== false)
             ) {
-                // Strip all beta headers and fallback to flagship Sonnet 5.5
+                // Strip all beta headers, ensure user-agent is standard API client, and fallback to flagship Sonnet 5.5
                 $headersToSend = array_values(array_filter($headersToSend, function($h) {
-                    return !str_starts_with(strtolower($h), 'anthropic-beta:');
+                    $hL = strtolower($h);
+                    return !str_starts_with($hL, 'anthropic-beta:') && !str_starts_with($hL, 'x-anthropic-billing-header:');
                 }));
+                $headersToSend = array_map(function($h) {
+                    if (str_starts_with(strtolower($h), 'user-agent:')) {
+                        return 'User-Agent: ClaudePulse-Gateway/1.2.0 (Anthropic-API-Client)';
+                    }
+                    return $h;
+                }, $headersToSend);
                 $body['model'] = 'claude-sonnet-5-5';
                 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 continue; // Retry with promotional-credit-compatible flagship model!
@@ -1219,10 +1213,17 @@ foreach ($upstreamKeys as $index => $upstreamRow) {
                 $healingAttempt < $maxToolHealingRetries &&
                 (stripos($respStr, 'Credit balance is too low') !== false || stripos($respStr, 'balance is too low') !== false)
             ) {
-                // Strip all beta headers and fallback to flagship Sonnet 5.5
+                // Strip all beta headers, ensure user-agent is standard API client, and fallback to flagship Sonnet 5.5
                 $headersToSend = array_values(array_filter($headersToSend, function($h) {
-                    return !str_starts_with(strtolower($h), 'anthropic-beta:');
+                    $hL = strtolower($h);
+                    return !str_starts_with($hL, 'anthropic-beta:') && !str_starts_with($hL, 'x-anthropic-billing-header:');
                 }));
+                $headersToSend = array_map(function($h) {
+                    if (str_starts_with(strtolower($h), 'user-agent:')) {
+                        return 'User-Agent: ClaudePulse-Gateway/1.2.0 (Anthropic-API-Client)';
+                    }
+                    return $h;
+                }, $headersToSend);
                 $body['model'] = 'claude-sonnet-5-5';
                 $rawInput = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 continue; // Retry with promotional-credit-compatible model!
